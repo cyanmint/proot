@@ -9,34 +9,52 @@ on:
 
 jobs:
   build-musl-static:
-    name: Build with musl (static)
+    name: Build with musl (static) - aarch64
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Install musl tools
+    - name: Install cross-compilation tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y musl-tools musl-dev python3-dev
+        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+          qemu-user-static python3-dev wget
         
-    - name: Build talloc for musl
+    - name: Download and setup musl for aarch64
+      run: |
+        cd /tmp
+        # Download musl source
+        wget https://musl.libc.org/releases/musl-1.2.5.tar.gz
+        tar -xzf musl-1.2.5.tar.gz
+        cd musl-1.2.5
+        # Build musl for aarch64
+        ./configure --prefix=/usr/local/musl-aarch64 \
+          --target=aarch64-linux-musl \
+          CC=aarch64-linux-gnu-gcc
+        make -j$(nproc)
+        sudo make install
+        # Create musl-gcc wrapper
+        sudo tee /usr/local/bin/aarch64-linux-musl-gcc > /dev/null << 'WRAPPER'
+        #!/bin/sh
+        exec /usr/local/musl-aarch64/bin/musl-gcc "$@"
+        WRAPPER
+        sudo chmod +x /usr/local/bin/aarch64-linux-musl-gcc
+        
+    - name: Build talloc for musl aarch64
       run: |
         cd /tmp
         wget https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz
         tar -xzf talloc-2.4.2.tar.gz
         cd talloc-2.4.2
-        # Build talloc with musl using waf
-        CC=musl-gcc ./configure --prefix=/usr/local/musl --disable-python --disable-rpath
-        CC=musl-gcc make
+        # Build talloc for aarch64 with musl
+        CC=aarch64-linux-gnu-gcc \
+          AR=aarch64-linux-gnu-ar \
+          ./configure --prefix=/usr/local/musl-aarch64 \
+          --disable-python --disable-rpath --cross-compile --cross-execute="qemu-aarch64-static -L /usr/aarch64-linux-gnu"
+        make -j$(nproc)
         sudo make install
-        # Also copy to standard musl locations
-        sudo mkdir -p /usr/lib/x86_64-linux-musl
-        sudo cp /usr/local/musl/lib/libtalloc.a /usr/lib/x86_64-linux-musl/ || true
-        sudo cp /usr/local/musl/lib/libtalloc.so* /usr/lib/x86_64-linux-musl/ || true
-        sudo mkdir -p /usr/include/x86_64-linux-musl
-        sudo cp /usr/local/musl/include/talloc.h /usr/include/x86_64-linux-musl/ || true
         
     - name: Create ashmem header
       run: |
@@ -70,33 +88,29 @@ jobs:
         #endif
         EOF
         
-    - name: Build with musl (static linking)
+    - name: Build with musl (static linking) - aarch64
       run: |
         cd src
         make clean
-        # Build with musl-gcc and link against musl talloc
-        CC=musl-gcc \
-          CFLAGS="-I/usr/local/musl/include -I/usr/include/x86_64-linux-musl" \
-          LDFLAGS="-L/usr/local/musl/lib -L/usr/lib/x86_64-linux-musl -static" \
+        # Build for aarch64 with musl
+        CC=aarch64-linux-gnu-gcc \
+          CFLAGS="-I/usr/local/musl-aarch64/include -static" \
+          LDFLAGS="-L/usr/local/musl-aarch64/lib -static -ltalloc" \
           make
         file proot
         ls -lh proot
-        # Verify it's statically linked
-        ldd proot || echo "Static binary (expected)"
+        # Verify architecture
+        file proot | grep aarch64 || { echo "ERROR: Not aarch64 binary"; exit 1; }
         
     - name: Upload musl static binary
       uses: actions/upload-artifact@v6
       with:
-        name: proot-musl-static
+        name: proot-musl-static-aarch64
         path: src/proot
 
   build-android-bionic:
-    name: Build with Android Bionic (dynamic)
+    name: Build with Android Bionic (dynamic) - aarch64
     runs-on: ubuntu-latest
-    
-    strategy:
-      matrix:
-        arch: [arm64, x86_64]
     
     steps:
     - name: Checkout code
@@ -107,10 +121,10 @@ jobs:
       with:
         ndk-version: r26b
         
-    - name: Install dependencies
+    - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libtalloc-dev
+        sudo apt-get install -y python3-dev wget
         
     - name: Create ashmem header
       run: |
@@ -144,31 +158,46 @@ jobs:
         #endif
         EOF
         
-    - name: Build with Android NDK (${{ matrix.arch }})
+    - name: Build talloc for Android aarch64
+      run: |
+        cd /tmp
+        wget https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz
+        tar -xzf talloc-2.4.2.tar.gz
+        cd talloc-2.4.2
+        # Setup Android NDK environment
+        export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+        export TARGET=aarch64-linux-android
+        export API=21
+        export CC=$TOOLCHAIN/bin/$TARGET$API-clang
+        export AR=$TOOLCHAIN/bin/llvm-ar
+        export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+        # Build talloc for Android
+        ./configure --prefix=/tmp/android-talloc \
+          --disable-python --disable-rpath \
+          --cross-compile --cross-execute=""
+        make -j$(nproc)
+        make install
+        
+    - name: Build with Android NDK (aarch64)
       run: |
         cd src
         make clean
-        if [ "${{ matrix.arch }}" = "arm64" ]; then
-          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
-          export TARGET=aarch64-linux-android
-          export API=21
-          export CC=$TOOLCHAIN/bin/$TARGET$API-clang
-        else
-          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
-          export TARGET=x86_64-linux-android
-          export API=21
-          export CC=$TOOLCHAIN/bin/$TARGET$API-clang
-        fi
-        # Try building - talloc should be available from apt
-        make || {
-          echo "Build failed - this may require talloc to be cross-compiled for Android"
-          exit 1
-        }
+        export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+        export TARGET=aarch64-linux-android
+        export API=21
+        export CC=$TOOLCHAIN/bin/$TARGET$API-clang
+        # Build with Android NDK
+        CC=$CC \
+          CFLAGS="-I/tmp/android-talloc/include" \
+          LDFLAGS="-L/tmp/android-talloc/lib" \
+          make
         file proot
         ls -lh proot
+        # Verify architecture
+        file proot | grep aarch64 || { echo "ERROR: Not aarch64 binary"; exit 1; }
         
     - name: Upload Android binary
       uses: actions/upload-artifact@v6
       with:
-        name: proot-android-bionic-${{ matrix.arch }}
+        name: proot-android-bionic-aarch64
         path: src/proot
