@@ -2,9 +2,9 @@ name: Build PRoot
 
 on:
   push:
-    branches: [ main, master, copilot/** ]
+    branches: [ master ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
