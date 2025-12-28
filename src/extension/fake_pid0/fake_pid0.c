@@ -34,6 +34,7 @@
 
 typedef struct {
 	bool is_root_tracee;
+	pid_t root_pid;  /* Real PID of the root tracee */
 } Config;
 
 /* List of syscalls handled by this extension.  */
@@ -41,6 +42,11 @@ static FilteredSysnum filtered_sysnums[] = {
 	{ PR_getpid,	FILTER_SYSEXIT },
 	{ PR_getppid,	FILTER_SYSEXIT },
 	{ PR_gettid,	FILTER_SYSEXIT },
+	{ PR_kill,	0 },  /* Translate PID 1 to root tracee */
+	{ PR_tkill,	0 },
+	{ PR_tgkill,	0 },
+	{ PR_wait4,	0 },
+	{ PR_waitpid,	0 },
 	FILTERED_SYSNUM_END,
 };
 
@@ -55,6 +61,7 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 	switch (event) {
 	case INITIALIZATION: {
 		Config *config;
+		Tracee *tracee = TRACEE(extension);
 
 		extension->config = talloc_zero(extension, Config);
 		if (extension->config == NULL)
@@ -63,6 +70,7 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		config = talloc_get_type_abort(extension->config, Config);
 		/* The first tracee to initialize this extension is the root */
 		config->is_root_tracee = true;
+		config->root_pid = tracee->pid;  /* Store real PID of root */
 
 		extension->filtered_sysnums = filtered_sysnums;
 		return 0;
@@ -75,6 +83,7 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 
 	case INHERIT_CHILD: {
 		Extension *parent = (Extension *) data1;
+		Config *parent_config;
 		Config *config;
 
 		if (parent == NULL || parent->config == NULL)
@@ -84,10 +93,62 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		if (extension->config == NULL)
 			return -1;
 
+		parent_config = talloc_get_type_abort(parent->config, Config);
 		config = talloc_get_type_abort(extension->config, Config);
 		
 		/* Child processes are not the root tracee */
+		/* Child processes are not the root tracee */
 		config->is_root_tracee = false;
+		/* Inherit the root PID from parent */
+		config->root_pid = parent_config->root_pid;
+
+		return 0;
+	}
+
+	case SYSCALL_ENTER_END: {
+		Tracee *tracee = TRACEE(extension);
+		Config *config;
+		word_t sysnum;
+		pid_t pid_arg;
+
+		/* Check if config exists */
+		if (extension->config == NULL)
+			return 0;
+
+		config = talloc_get_type_abort(extension->config, Config);
+		sysnum = get_sysnum(tracee, ORIGINAL);
+
+		/* Translate PID 1 to root tracee's real PID for syscalls that take PID arguments */
+		switch (sysnum) {
+		case PR_kill:
+		case PR_tkill:
+			/* kill(pid, sig) - PID is in SYSARG_1 */
+			pid_arg = peek_reg(tracee, ORIGINAL, SYSARG_1);
+			if (pid_arg == 1) {
+				poke_reg(tracee, SYSARG_1, config->root_pid);
+			}
+			break;
+
+		case PR_tgkill:
+			/* tgkill(tgid, tid, sig) - TGID is in SYSARG_1 */
+			pid_arg = peek_reg(tracee, ORIGINAL, SYSARG_1);
+			if (pid_arg == 1) {
+				poke_reg(tracee, SYSARG_1, config->root_pid);
+			}
+			break;
+
+		case PR_wait4:
+		case PR_waitpid:
+			/* waitpid(pid, ...) - PID is in SYSARG_1 */
+			pid_arg = peek_reg(tracee, ORIGINAL, SYSARG_1);
+			if (pid_arg == 1) {
+				poke_reg(tracee, SYSARG_1, config->root_pid);
+			}
+			break;
+
+		default:
+			break;
+		}
 
 		return 0;
 	}
@@ -112,8 +173,15 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 			return 0;
 		}
 
-		/* Handle getppid - return 1 if parent is root tracee */
+		/* Handle getppid */
 		if (sysnum == PR_getppid) {
+			/* If this is the root tracee, it should see PPID=0 (like real init) */
+			if (config->is_root_tracee) {
+				poke_reg(tracee, SYSARG_RESULT, 0);
+				return 0;
+			}
+			
+			/* For non-root processes, return 1 if parent is root tracee */
 			if (tracee->parent != NULL) {
 				Extension *parent_ext = get_extension(tracee->parent, fake_pid0_callback);
 				if (parent_ext != NULL && parent_ext->config != NULL) {
