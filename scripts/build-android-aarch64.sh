@@ -54,7 +54,23 @@ Checking uname release type: "5.0.0"
 Checking uname version type: "1"
 rpath library support: OK
 -Wl,--version-script support: OK
+Checking for large file support: OK
+Checking for -D_FILE_OFFSET_BITS=64: OK
+Checking for HAVE_C99_VSNPRINTF: OK
+Checking for HAVE_SHARED_MMAP: OK
+Checking for HAVE_MREMAP: OK
+Checking for HAVE_INCOHERENT_MMAP: NO
+Checking for HAVE_SECURE_MKSTEMP: OK
+Checking getconf LFS_CFLAGS: NO
+Checking for working strptime: OK
+Checking for HAVE_IFACE_GETIFADDRS: NO
+Checking for HAVE_IFACE_AIX: NO
+Checking for HAVE_IFACE_IFCONF: NO
+Checking for HAVE_IFACE_IFREQ: OK
 ANSWERS
+
+# Add large file support flags
+export CFLAGS="-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE"
 
 ./configure --prefix=/tmp/android-talloc \
   --disable-python --disable-rpath \

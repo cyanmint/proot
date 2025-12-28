@@ -8,21 +8,22 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-musl-static:
-    name: Build with musl (static) - aarch64
+  build-glibc-static:
+    name: Build with glibc (static) - aarch64
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Build with musl (static, aarch64)
-      run: ./scripts/build-musl-aarch64.sh
+    - name: Build with glibc (static, aarch64)
+      run: |
+        ./scripts/build-glibc-static-aarch64.sh
         
-    - name: Upload musl static binary
+    - name: Upload glibc static binary
       uses: actions/upload-artifact@v6
       with:
-        name: proot-musl-static-aarch64
+        name: proot-glibc-static-aarch64
         path: src/proot
 
   build-android-bionic:
