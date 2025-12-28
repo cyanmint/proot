@@ -1,0 +1,49 @@
+name: Build PRoot
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-glibc-static:
+    name: Build with glibc (static) - aarch64
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Build with glibc (static, aarch64)
+      run: |
+        ./scripts/build-glibc-static-aarch64.sh
+        
+    - name: Upload glibc static binary
+      uses: actions/upload-artifact@v6
+      with:
+        name: proot-glibc-static-aarch64
+        path: src/proot
+
+  build-android-bionic:
+    name: Build with Android Bionic (dynamic) - aarch64
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Android NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r26b
+        
+    - name: Build with Android NDK (aarch64)
+      run: ./scripts/build-android-aarch64.sh
+        
+    - name: Upload Android binary
+      uses: actions/upload-artifact@v6
+      with:
+        name: proot-android-bionic-aarch64
+        path: src/proot

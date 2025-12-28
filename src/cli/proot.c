@@ -335,6 +335,25 @@ static int handle_option_p(Tracee *tracee, const Cli *cli UNUSED, const char *va
         return 0;
 }
 
+static int handle_option_P(Tracee *tracee, const Cli *cli UNUSED, const char *value UNUSED)
+{
+	void *extension;
+	int status;
+
+	extension = get_extension(tracee, fake_pid0_callback);
+	if (extension != NULL) {
+		note(tracee, WARNING, USER, "option -P/--fake-pid1 was already specified");
+		note(tracee, INFO, USER, "only the last -P/--fake-pid1 option is enabled");
+		TALLOC_FREE(extension);
+	}
+
+	status = initialize_extension(tracee, fake_pid0_callback, NULL);
+	if (status < 0)
+		note(tracee, WARNING, INTERNAL, "option \"-P\" discarded");
+
+	return 0;
+}
+
 /**
  * Initialize @tracee->qemu.
  */

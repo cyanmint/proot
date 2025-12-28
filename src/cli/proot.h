@@ -67,6 +67,7 @@ static int handle_option_kill_on_exit(Tracee *tracee, const Cli *cli, const char
 static int handle_option_L(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_H(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_p(Tracee *tracee, const Cli *cli, const char *value);
+static int handle_option_P(Tracee *tracee, const Cli *cli, const char *value);
 
 static int pre_initialize_bindings(Tracee *, const Cli *, size_t, char *const *, size_t);
 static int post_initialize_exe(Tracee *, const Cli *, size_t, char *const *, size_t);
@@ -275,6 +276,18 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
           .handler = handle_option_p,
           .description = "Modify bindings to protected ports to use a higher port number.",
           .detail = "",
+        },
+        { .class = "Extension options",
+          .arguments = {
+                { .name = "-P", .separator = '\0', .value = NULL },
+                { .name = "--fake-pid1", .separator = '\0', .value = NULL },
+                { .name = NULL, .separator = '\0', .value = NULL } },
+          .handler = handle_option_P,
+          .description = "Make the first process believe it is PID 1.",
+          .detail = "\tThis option makes getpid() and gettid() return 1 for the first\n\
+\tcontained process, making it think it is the init process. Child\n\
+\tprocesses will have their actual PIDs. When the first process calls\n\
+\texecve, the new program will also see itself as PID 1.",
         },
         { .class = "Extension options",
           .arguments = {
