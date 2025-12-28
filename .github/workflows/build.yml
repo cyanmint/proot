@@ -19,14 +19,21 @@ jobs:
     - name: Install musl tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y musl-tools musl-dev
+        sudo apt-get install -y musl-tools musl-dev python3-dev
         
-    - name: Install talloc for musl
+    - name: Build talloc for musl
       run: |
-        wget http://archive.ubuntu.com/ubuntu/pool/main/t/talloc/libtalloc2_2.4.2-1build2_amd64.deb
-        wget http://archive.ubuntu.com/ubuntu/pool/main/t/talloc/libtalloc-dev_2.4.2-1build2_amd64.deb
-        sudo dpkg -i libtalloc2_2.4.2-1build2_amd64.deb libtalloc-dev_2.4.2-1build2_amd64.deb || true
-        sudo apt-get install -f -y
+        cd /tmp
+        wget https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz
+        tar -xzf talloc-2.4.2.tar.gz
+        cd talloc-2.4.2
+        # Configure and build talloc with musl
+        CC=musl-gcc ./configure --prefix=/usr/local/musl --disable-python
+        make
+        sudo make install
+        # Create symlinks for easier linking
+        sudo ln -sf /usr/local/musl/lib/libtalloc.a /usr/lib/x86_64-linux-musl/libtalloc.a || true
+        sudo ln -sf /usr/local/musl/include/talloc.h /usr/include/x86_64-linux-musl/talloc.h || true
         
     - name: Create ashmem header
       run: |
@@ -64,8 +71,9 @@ jobs:
       run: |
         cd src
         make clean
-        CC=musl-gcc LDFLAGS="-static -ltalloc" make
+        CC=musl-gcc CFLAGS="-I/usr/local/musl/include" LDFLAGS="-L/usr/local/musl/lib -static" make
         file proot
+        ls -lh proot
         
     - name: Upload musl static binary
       uses: actions/upload-artifact@v6
