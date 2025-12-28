@@ -335,6 +335,12 @@ static int handle_option_p(Tracee *tracee, const Cli *cli UNUSED, const char *va
         return 0;
 }
 
+static int handle_option_P(Tracee *tracee, const Cli *cli UNUSED, const char *value UNUSED)
+{
+        (void) initialize_extension(tracee, fake_pid0_callback, NULL);
+        return 0;
+}
+
 /**
  * Initialize @tracee->qemu.
  */
