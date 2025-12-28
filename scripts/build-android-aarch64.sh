@@ -83,12 +83,17 @@ cat > lib/replace/config.h << 'EOF'
 #define TALLOC_BUILD_VERSION_MINOR 4
 #define TALLOC_BUILD_VERSION_RELEASE 2
 
-/* Functions */
+/* Functions - use system versions, not replacements */
 #define HAVE_MMAP 1
 #define HAVE_VA_COPY 1
 #define HAVE_C99_VSNPRINTF 1
 #define HAVE_MEMALIGN 1
 #define HAVE_USLEEP 1
+#define HAVE_VSNPRINTF 1
+#define HAVE_SNPRINTF 1
+#define HAVE_MEMMOVE 1
+#define HAVE_STRNLEN 1
+#define HAVE_MEMSET 1
 
 /* Android doesn't have RTLD_DEFAULT in bionic before API 23 */
 #ifndef RTLD_DEFAULT
@@ -131,16 +136,14 @@ export TARGET=aarch64-linux-android
 export API=21
 export CC=$TOOLCHAIN/bin/$TARGET$API-clang
 export AR=$TOOLCHAIN/bin/llvm-ar
-export LD=$TOOLCHAIN/bin/ld.lld
+export LD=$TOOLCHAIN/bin/$TARGET$API-clang
 export STRIP=$TOOLCHAIN/bin/llvm-strip
 export OBJCOPY=$TOOLCHAIN/bin/llvm-objcopy
+export OBJDUMP=$TOOLCHAIN/bin/llvm-objdump
 export CROSS_COMPILE=aarch64-linux-android-
 
-# Build without loader (create dummy loader binaries to satisfy dependencies)
-# Loader is for 32-bit and not needed for Android aarch64
-echo "Creating dummy loader files..."
-touch loader/loader loader/loader-m32
-chmod +x loader/loader loader/loader-m32
+# Build proot with loader for Android
+echo "Building proot with loader for Android aarch64..."
 
 make \
   CC="$CC" \
@@ -148,6 +151,8 @@ make \
   LD="$LD" \
   STRIP="$STRIP" \
   OBJCOPY="$OBJCOPY" \
+  OBJDUMP="$OBJDUMP" \
+  HAS_LOADER_32BIT= \
   CFLAGS="-I/tmp/android-talloc/include -I$REPO_ROOT/src/compat" \
   LDFLAGS="-L/tmp/android-talloc/lib -ltalloc" \
   proot
