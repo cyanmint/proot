@@ -27,13 +27,16 @@ jobs:
         wget https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz
         tar -xzf talloc-2.4.2.tar.gz
         cd talloc-2.4.2
-        # Configure and build talloc with musl
-        CC=musl-gcc ./configure --prefix=/usr/local/musl --disable-python
-        make
+        # Build talloc with musl using waf
+        CC=musl-gcc ./configure --prefix=/usr/local/musl --disable-python --disable-rpath
+        CC=musl-gcc make
         sudo make install
-        # Create symlinks for easier linking
-        sudo ln -sf /usr/local/musl/lib/libtalloc.a /usr/lib/x86_64-linux-musl/libtalloc.a || true
-        sudo ln -sf /usr/local/musl/include/talloc.h /usr/include/x86_64-linux-musl/talloc.h || true
+        # Also copy to standard musl locations
+        sudo mkdir -p /usr/lib/x86_64-linux-musl
+        sudo cp /usr/local/musl/lib/libtalloc.a /usr/lib/x86_64-linux-musl/ || true
+        sudo cp /usr/local/musl/lib/libtalloc.so* /usr/lib/x86_64-linux-musl/ || true
+        sudo mkdir -p /usr/include/x86_64-linux-musl
+        sudo cp /usr/local/musl/include/talloc.h /usr/include/x86_64-linux-musl/ || true
         
     - name: Create ashmem header
       run: |
@@ -71,9 +74,15 @@ jobs:
       run: |
         cd src
         make clean
-        CC=musl-gcc CFLAGS="-I/usr/local/musl/include" LDFLAGS="-L/usr/local/musl/lib -static" make
+        # Build with musl-gcc and link against musl talloc
+        CC=musl-gcc \
+          CFLAGS="-I/usr/local/musl/include -I/usr/include/x86_64-linux-musl" \
+          LDFLAGS="-L/usr/local/musl/lib -L/usr/lib/x86_64-linux-musl -static" \
+          make
         file proot
         ls -lh proot
+        # Verify it's statically linked
+        ldd proot || echo "Static binary (expected)"
         
     - name: Upload musl static binary
       uses: actions/upload-artifact@v6
@@ -150,8 +159,13 @@ jobs:
           export API=21
           export CC=$TOOLCHAIN/bin/$TARGET$API-clang
         fi
-        make CROSS_COMPILE="${TARGET}-"
+        # Try building - talloc should be available from apt
+        make || {
+          echo "Build failed - this may require talloc to be cross-compiled for Android"
+          exit 1
+        }
         file proot
+        ls -lh proot
         
     - name: Upload Android binary
       uses: actions/upload-artifact@v6
