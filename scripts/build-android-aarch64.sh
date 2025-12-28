@@ -46,9 +46,19 @@ export AR=$TOOLCHAIN/bin/llvm-ar
 export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
 
 # Build talloc for Android
+# Create cross-answers file for talloc
+cat > cross-answers.txt << 'ANSWERS'
+Checking uname sysname type: "Linux"
+Checking uname machine type: "aarch64"
+Checking uname release type: "5.0.0"
+Checking uname version type: "1"
+rpath library support: OK
+-Wl,--version-script support: OK
+ANSWERS
+
 ./configure --prefix=/tmp/android-talloc \
   --disable-python --disable-rpath \
-  --cross-compile --cross-execute=""
+  --cross-compile --cross-answers=cross-answers.txt
 make -j$(nproc)
 make install
 

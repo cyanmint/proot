@@ -31,16 +31,11 @@ fi
 cd musl-1.2.5
 ./configure --prefix=/usr/local/musl-aarch64 \
   --target=aarch64-linux-musl \
-  CC=aarch64-linux-gnu-gcc
+  CC=aarch64-linux-gnu-gcc \
+  AR=aarch64-linux-gnu-ar \
+  RANLIB=aarch64-linux-gnu-ranlib
 make -j$(nproc)
 sudo make install
-
-# Create musl-gcc wrapper
-sudo tee /usr/local/bin/aarch64-linux-musl-gcc > /dev/null << 'WRAPPER'
-#!/bin/sh
-exec /usr/local/musl-aarch64/bin/musl-gcc "$@"
-WRAPPER
-sudo chmod +x /usr/local/bin/aarch64-linux-musl-gcc
 
 # Build talloc for musl aarch64
 echo "Building talloc for musl aarch64..."
