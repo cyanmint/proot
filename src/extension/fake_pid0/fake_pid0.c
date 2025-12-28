@@ -24,6 +24,10 @@
 #include <stdbool.h>     /* bool, true, false */
 #include <sys/types.h>   /* pid_t, */
 #include <talloc.h>      /* talloc, */
+#include <string.h>      /* strncmp, strcpy, */
+#include <stdio.h>       /* snprintf, */
+#include <errno.h>       /* ENAMETOOLONG, */
+#include <linux/limits.h> /* PATH_MAX, */
 
 #include "extension/extension.h"
 #include "syscall/syscall.h"
@@ -102,6 +106,38 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		/* Inherit the root PID from parent */
 		config->root_pid = parent_config->root_pid;
 
+		return 0;
+	}
+
+	case TRANSLATED_PATH: {
+		Tracee *tracee = TRACEE(extension);
+		Config *config;
+		char *translated_path = (char *) data1;
+		char new_path[PATH_MAX];
+		int status;
+
+		/* Check if config exists */
+		if (extension->config == NULL || translated_path == NULL)
+			return 0;
+
+		config = talloc_get_type_abort(extension->config, Config);
+
+		/* Check if the path starts with "/proc/1" or is exactly "/proc/1" */
+		if (strncmp(translated_path, "/proc/1", 7) != 0)
+			return 0;
+
+		/* Check if it's exactly "/proc/1" or "/proc/1/" or "/proc/1/..." */
+		if (translated_path[7] != '\0' && translated_path[7] != '/')
+			return 0;
+
+		/* Replace "/proc/1" with "/proc/{root_pid}" */
+		status = snprintf(new_path, PATH_MAX, "/proc/%d%s", 
+				  config->root_pid, translated_path + 7);
+		if (status < 0 || status >= PATH_MAX)
+			return -ENAMETOOLONG;
+
+		/* Replace the translated path */
+		strcpy(translated_path, new_path);
 		return 0;
 	}
 
