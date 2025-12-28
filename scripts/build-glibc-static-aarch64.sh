@@ -30,33 +30,45 @@ fi
 
 cd talloc-2.4.2
 
-# Create cross-answers file for talloc
+# Create cross-answers file for talloc (minimal - let qemu run tests)
 cat > cross-answers.txt << 'ANSWERS'
 Checking uname sysname type: "Linux"
 Checking uname machine type: "aarch64"
 Checking uname release type: "5.0.0"
 Checking uname version type: "1"
-rpath library support: OK
--Wl,--version-script support: OK
 ANSWERS
 
 CC=aarch64-linux-gnu-gcc \
   AR=aarch64-linux-gnu-ar \
+  CFLAGS="-D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE" \
   ./configure --prefix=/usr/local/talloc-aarch64 \
   --disable-python --disable-rpath \
-  --cross-compile --cross-answers=cross-answers.txt
+  --cross-compile --cross-answers=cross-answers.txt \
+  --cross-execute="qemu-aarch64-static -L /usr/aarch64-linux-gnu" \
+  --bundled-libraries=talloc \
+  --builtin-libraries=replace
+
+# Build both static and shared
 make -j$(nproc)
 sudo make install
 
-# Build proot
+# Create static library from object files
+echo "Creating static library..."
+cd bin/default
+sudo aarch64-linux-gnu-ar rcs /usr/local/talloc-aarch64/lib/libtalloc.a talloc*.o
+cd ../..
+
+# Build proot (without 32-bit loader for cross-compile)
 echo "Building proot..."
 cd "$REPO_ROOT/src"
 make clean
 
-CC=aarch64-linux-gnu-gcc \
+# Override HAS_LOADER_32BIT since we're cross-compiling and don't have 32-bit toolchain
+make CROSS_COMPILE=aarch64-linux-gnu- \
+  CC=aarch64-linux-gnu-gcc \
   CFLAGS="-I/usr/local/talloc-aarch64/include -I$REPO_ROOT/src/compat" \
   LDFLAGS="-L/usr/local/talloc-aarch64/lib -static -ltalloc" \
-  make
+  HAS_LOADER_32BIT=
 
 # Verify
 echo "Verifying build..."
