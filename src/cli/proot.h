@@ -283,10 +283,11 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
                 { .name = "--fake-pid0", .separator = '\0', .value = NULL },
                 { .name = NULL, .separator = '\0', .value = NULL } },
           .handler = handle_option_P,
-          .description = "Make the first process believe it is PID 1.",
-          .detail = "\tThis option makes getpid() return 1 for the contained process,\n\
-\tmaking it think it's the init process. This is useful for running\n\
-\tprograms that expect to be PID 1, such as system init systems.",
+          .description = "Make all contained processes believe they are PID 1.",
+          .detail = "\tThis option makes getpid() and gettid() return 1 for all\n\
+\tcontained processes, making them think they are the init process.\n\
+\tThis is useful for running programs that expect to be PID 1,\n\
+\tsuch as system init systems or containerized applications.",
         },
         { .class = "Extension options",
           .arguments = {

@@ -34,6 +34,7 @@
 /* List of syscalls handled by this extension.  */
 static FilteredSysnum filtered_sysnums[] = {
 	{ PR_getpid,	FILTER_SYSEXIT },
+	{ PR_gettid,	FILTER_SYSEXIT },
 	FILTERED_SYSNUM_END,
 };
 
@@ -62,15 +63,8 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 
 	case SYSCALL_EXIT_END: {
 		Tracee *tracee = TRACEE(extension);
-		word_t sysnum;
 
-		sysnum = get_sysnum(tracee, ORIGINAL);
-		
-		/* Only handle getpid syscall */
-		if (sysnum != PR_getpid)
-			return 0;
-
-		/* Return PID 1 for the first contained process */
+		/* Return PID/TID 1 for all contained processes */
 		poke_reg(tracee, SYSARG_RESULT, 1);
 		return 0;
 	}
