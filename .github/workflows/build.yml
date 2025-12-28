@@ -68,7 +68,7 @@ jobs:
         file proot
         
     - name: Upload musl static binary
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v6
       with:
         name: proot-musl-static
         path: src/proot
