@@ -1,0 +1,87 @@
+#!/bin/bash
+# Build script for proot with musl libc (static, aarch64)
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BUILD_DIR="${BUILD_DIR:-/tmp/proot-build-musl}"
+
+echo "=========================================="
+echo "Building proot with musl (static, aarch64)"
+echo "=========================================="
+
+# Install cross-compilation tools
+echo "Installing cross-compilation tools..."
+sudo apt-get update
+sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+  qemu-user-static python3-dev wget
+
+# Download and setup musl for aarch64
+echo "Building musl for aarch64..."
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
+
+if [ ! -d "musl-1.2.5" ]; then
+  wget -q https://musl.libc.org/releases/musl-1.2.5.tar.gz
+  tar -xzf musl-1.2.5.tar.gz
+fi
+
+cd musl-1.2.5
+./configure --prefix=/usr/local/musl-aarch64 \
+  --target=aarch64-linux-musl \
+  CC=aarch64-linux-gnu-gcc
+make -j$(nproc)
+sudo make install
+
+# Create musl-gcc wrapper
+sudo tee /usr/local/bin/aarch64-linux-musl-gcc > /dev/null << 'WRAPPER'
+#!/bin/sh
+exec /usr/local/musl-aarch64/bin/musl-gcc "$@"
+WRAPPER
+sudo chmod +x /usr/local/bin/aarch64-linux-musl-gcc
+
+# Build talloc for musl aarch64
+echo "Building talloc for musl aarch64..."
+cd "$BUILD_DIR"
+
+if [ ! -d "talloc-2.4.2" ]; then
+  wget -q https://www.samba.org/ftp/talloc/talloc-2.4.2.tar.gz
+  tar -xzf talloc-2.4.2.tar.gz
+fi
+
+cd talloc-2.4.2
+CC=aarch64-linux-gnu-gcc \
+  AR=aarch64-linux-gnu-ar \
+  ./configure --prefix=/usr/local/musl-aarch64 \
+  --disable-python --disable-rpath --cross-compile \
+  --cross-execute="qemu-aarch64-static -L /usr/aarch64-linux-gnu"
+make -j$(nproc)
+sudo make install
+
+# Build proot
+echo "Building proot..."
+cd "$REPO_ROOT/src"
+make clean
+
+CC=aarch64-linux-gnu-gcc \
+  CFLAGS="-I/usr/local/musl-aarch64/include -I$REPO_ROOT/src/compat -static" \
+  LDFLAGS="-L/usr/local/musl-aarch64/lib -static -ltalloc" \
+  make
+
+# Verify
+echo "Verifying build..."
+file proot
+ls -lh proot
+
+# Verify architecture
+if file proot | grep -q aarch64; then
+  echo "✓ Successfully built aarch64 binary"
+else
+  echo "✗ ERROR: Not aarch64 binary"
+  exit 1
+fi
+
+echo "=========================================="
+echo "Build completed successfully!"
+echo "Binary: $REPO_ROOT/src/proot"
+echo "=========================================="
