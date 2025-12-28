@@ -342,8 +342,8 @@ static int handle_option_P(Tracee *tracee, const Cli *cli UNUSED, const char *va
 
 	extension = get_extension(tracee, fake_pid0_callback);
 	if (extension != NULL) {
-		note(tracee, WARNING, USER, "option -P/--fake-pid0 was already specified");
-		note(tracee, INFO, USER, "only the last -P/--fake-pid0 option is enabled");
+		note(tracee, WARNING, USER, "option -P/--fake-pid1 was already specified");
+		note(tracee, INFO, USER, "only the last -P/--fake-pid1 option is enabled");
 		TALLOC_FREE(extension);
 	}
 

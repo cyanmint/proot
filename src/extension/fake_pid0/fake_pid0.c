@@ -23,6 +23,7 @@
 #include <stdint.h>      /* intptr_t, */
 #include <stdbool.h>     /* bool, true, false */
 #include <sys/types.h>   /* pid_t, */
+#include <talloc.h>      /* talloc, */
 
 #include "extension/extension.h"
 #include "syscall/syscall.h"
@@ -31,9 +32,14 @@
 #include "tracee/tracee.h"
 #include "tracee/reg.h"
 
+typedef struct {
+	bool is_root_tracee;
+} Config;
+
 /* List of syscalls handled by this extension.  */
 static FilteredSysnum filtered_sysnums[] = {
 	{ PR_getpid,	FILTER_SYSEXIT },
+	{ PR_getppid,	FILTER_SYSEXIT },
 	{ PR_gettid,	FILTER_SYSEXIT },
 	FILTERED_SYSNUM_END,
 };
@@ -44,28 +50,82 @@ static FilteredSysnum filtered_sysnums[] = {
  */
 int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data1, intptr_t data2)
 {
-	(void) data1;
 	(void) data2;
 
 	switch (event) {
-	case INITIALIZATION:
+	case INITIALIZATION: {
+		Config *config;
+
+		extension->config = talloc_zero(extension, Config);
+		if (extension->config == NULL)
+			return -1;
+
+		config = talloc_get_type_abort(extension->config, Config);
+		/* The first tracee to initialize this extension is the root */
+		config->is_root_tracee = true;
+
 		extension->filtered_sysnums = filtered_sysnums;
 		return 0;
+	}
 
 	case INHERIT_PARENT:
-		/* This extension is inheritable.  */
+		/* This extension is inheritable and child processes 
+		 * need their own config.  */
 		return 1;
 
 	case INHERIT_CHILD: {
-		/* Nothing special to do.  */
+		Extension *parent = (Extension *) data1;
+		Config *config;
+
+		if (parent == NULL || parent->config == NULL)
+			return -1;
+
+		extension->config = talloc_zero(extension, Config);
+		if (extension->config == NULL)
+			return -1;
+
+		config = talloc_get_type_abort(extension->config, Config);
+		
+		/* Child processes are not the root tracee */
+		config->is_root_tracee = false;
+
 		return 0;
 	}
 
 	case SYSCALL_EXIT_END: {
 		Tracee *tracee = TRACEE(extension);
+		Config *config;
+		word_t sysnum;
 
-		/* Return PID/TID 1 for all contained processes */
-		poke_reg(tracee, SYSARG_RESULT, 1);
+		/* Check if config exists */
+		if (extension->config == NULL)
+			return 0;
+
+		config = talloc_get_type_abort(extension->config, Config);
+		sysnum = get_sysnum(tracee, ORIGINAL);
+
+		/* Handle getpid and gettid for root tracee */
+		if (sysnum == PR_getpid || sysnum == PR_gettid) {
+			if (config->is_root_tracee) {
+				poke_reg(tracee, SYSARG_RESULT, 1);
+			}
+			return 0;
+		}
+
+		/* Handle getppid - return 1 if parent is root tracee */
+		if (sysnum == PR_getppid) {
+			if (tracee->parent != NULL) {
+				Extension *parent_ext = get_extension(tracee->parent, fake_pid0_callback);
+				if (parent_ext != NULL && parent_ext->config != NULL) {
+					Config *parent_config = talloc_get_type_abort(parent_ext->config, Config);
+					if (parent_config->is_root_tracee) {
+						poke_reg(tracee, SYSARG_RESULT, 1);
+					}
+				}
+			}
+			return 0;
+		}
+
 		return 0;
 	}
 

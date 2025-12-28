@@ -1,0 +1,152 @@
+name: Build PRoot
+
+on:
+  push:
+    branches: [ main, master, copilot/** ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-musl-static:
+    name: Build with musl (static)
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Install musl tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y musl-tools musl-dev
+        
+    - name: Install talloc for musl
+      run: |
+        wget http://archive.ubuntu.com/ubuntu/pool/main/t/talloc/libtalloc2_2.4.2-1build2_amd64.deb
+        wget http://archive.ubuntu.com/ubuntu/pool/main/t/talloc/libtalloc-dev_2.4.2-1build2_amd64.deb
+        sudo dpkg -i libtalloc2_2.4.2-1build2_amd64.deb libtalloc-dev_2.4.2-1build2_amd64.deb || true
+        sudo apt-get install -f -y
+        
+    - name: Create ashmem header
+      run: |
+        sudo mkdir -p /usr/include/linux
+        sudo tee /usr/include/linux/ashmem.h > /dev/null << 'EOF'
+        #ifndef _LINUX_ASHMEM_H
+        #define _LINUX_ASHMEM_H
+        #include <linux/ioctl.h>
+        #include <linux/types.h>
+        #define ASHMEM_NAME_LEN 256
+        #define ASHMEM_NAME_DEF "dev/ashmem"
+        #define ASHMEM_NOT_PURGED 0
+        #define ASHMEM_WAS_PURGED 1
+        #define ASHMEM_IS_UNPINNED 0
+        #define ASHMEM_IS_PINNED 1
+        struct ashmem_pin {
+          __u32 offset;
+          __u32 len;
+        };
+        #define __ASHMEMIOC 0x77
+        #define ASHMEM_SET_NAME _IOW(__ASHMEMIOC, 1, char[ASHMEM_NAME_LEN])
+        #define ASHMEM_GET_NAME _IOR(__ASHMEMIOC, 2, char[ASHMEM_NAME_LEN])
+        #define ASHMEM_SET_SIZE _IOW(__ASHMEMIOC, 3, size_t)
+        #define ASHMEM_GET_SIZE _IO(__ASHMEMIOC, 4)
+        #define ASHMEM_SET_PROT_MASK _IOW(__ASHMEMIOC, 5, unsigned long)
+        #define ASHMEM_GET_PROT_MASK _IO(__ASHMEMIOC, 6)
+        #define ASHMEM_PIN _IOW(__ASHMEMIOC, 7, struct ashmem_pin)
+        #define ASHMEM_UNPIN _IOW(__ASHMEMIOC, 8, struct ashmem_pin)
+        #define ASHMEM_GET_PIN_STATUS _IO(__ASHMEMIOC, 9)
+        #define ASHMEM_PURGE_ALL_CACHES _IO(__ASHMEMIOC, 10)
+        #endif
+        EOF
+        
+    - name: Build with musl (static linking)
+      run: |
+        cd src
+        make clean
+        CC=musl-gcc LDFLAGS="-static -ltalloc" make
+        file proot
+        
+    - name: Upload musl static binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: proot-musl-static
+        path: src/proot
+
+  build-android-bionic:
+    name: Build with Android Bionic (dynamic)
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Set up Android NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r26b
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libtalloc-dev
+        
+    - name: Create ashmem header
+      run: |
+        sudo mkdir -p /usr/include/linux
+        sudo tee /usr/include/linux/ashmem.h > /dev/null << 'EOF'
+        #ifndef _LINUX_ASHMEM_H
+        #define _LINUX_ASHMEM_H
+        #include <linux/ioctl.h>
+        #include <linux/types.h>
+        #define ASHMEM_NAME_LEN 256
+        #define ASHMEM_NAME_DEF "dev/ashmem"
+        #define ASHMEM_NOT_PURGED 0
+        #define ASHMEM_WAS_PURGED 1
+        #define ASHMEM_IS_UNPINNED 0
+        #define ASHMEM_IS_PINNED 1
+        struct ashmem_pin {
+          __u32 offset;
+          __u32 len;
+        };
+        #define __ASHMEMIOC 0x77
+        #define ASHMEM_SET_NAME _IOW(__ASHMEMIOC, 1, char[ASHMEM_NAME_LEN])
+        #define ASHMEM_GET_NAME _IOR(__ASHMEMIOC, 2, char[ASHMEM_NAME_LEN])
+        #define ASHMEM_SET_SIZE _IOW(__ASHMEMIOC, 3, size_t)
+        #define ASHMEM_GET_SIZE _IO(__ASHMEMIOC, 4)
+        #define ASHMEM_SET_PROT_MASK _IOW(__ASHMEMIOC, 5, unsigned long)
+        #define ASHMEM_GET_PROT_MASK _IO(__ASHMEMIOC, 6)
+        #define ASHMEM_PIN _IOW(__ASHMEMIOC, 7, struct ashmem_pin)
+        #define ASHMEM_UNPIN _IOW(__ASHMEMIOC, 8, struct ashmem_pin)
+        #define ASHMEM_GET_PIN_STATUS _IO(__ASHMEMIOC, 9)
+        #define ASHMEM_PURGE_ALL_CACHES _IO(__ASHMEMIOC, 10)
+        #endif
+        EOF
+        
+    - name: Build with Android NDK (${{ matrix.arch }})
+      run: |
+        cd src
+        make clean
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+          export TARGET=aarch64-linux-android
+          export API=21
+          export CC=$TOOLCHAIN/bin/$TARGET$API-clang
+        else
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+          export TARGET=x86_64-linux-android
+          export API=21
+          export CC=$TOOLCHAIN/bin/$TARGET$API-clang
+        fi
+        make CROSS_COMPILE="${TARGET}-"
+        file proot
+        
+    - name: Upload Android binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: proot-android-bionic-${{ matrix.arch }}
+        path: src/proot
