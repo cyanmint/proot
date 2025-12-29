@@ -68,6 +68,7 @@ static int handle_option_L(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_H(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_p(Tracee *tracee, const Cli *cli, const char *value);
 static int handle_option_P(Tracee *tracee, const Cli *cli, const char *value);
+static int handle_option_fake_proc(Tracee *tracee, const Cli *cli, const char *value);
 
 static int pre_initialize_bindings(Tracee *, const Cli *, size_t, char *const *, size_t);
 static int post_initialize_exe(Tracee *, const Cli *, size_t, char *const *, size_t);
@@ -290,6 +291,18 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
 \tprocesses will have their actual PIDs. When the first process calls\n\
 \texecve, the new program will also see itself as PID 1.\n\
 \tNote that the -1 option is the same as -P.",
+        },
+        { .class = "Extension options",
+          .arguments = {
+                { .name = "-!", .separator = '\0', .value = NULL },
+                { .name = "--fake-proc", .separator = '\0', .value = NULL },
+                { .name = NULL, .separator = '\0', .value = NULL } },
+          .handler = handle_option_fake_proc,
+          .description = "Enable fake PID namespace with virtual /proc.",
+          .detail = "\tThis option enables full PID namespace emulation and automatically\n\
+\tcreates a virtual /proc filesystem. It's equivalent to using -1 with\n\
+\ta virtual /proc that shows fake PIDs. This option does not require\n\
+\t-b /proc to be specified.",
         },
         { .class = "Extension options",
           .arguments = {

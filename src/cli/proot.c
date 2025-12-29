@@ -355,6 +355,37 @@ static int handle_option_P(Tracee *tracee, const Cli *cli UNUSED, const char *va
 }
 
 /**
+ * Handler for "-!" / "--fake-proc": enable fake PID namespace with virtual /proc
+ */
+static int handle_option_fake_proc(Tracee *tracee, const Cli *cli UNUSED, const char *value UNUSED)
+{
+	void *extension;
+	int status;
+
+	/* First, enable the fake PID namespace (same as -P/-1) */
+	extension = get_extension(tracee, fake_pid0_callback);
+	if (extension != NULL) {
+		note(tracee, WARNING, USER, "option --fake-proc was already specified");
+		note(tracee, INFO, USER, "only the last --fake-proc option is enabled");
+		TALLOC_FREE(extension);
+	}
+
+	status = initialize_extension(tracee, fake_pid0_callback, NULL);
+	if (status < 0) {
+		note(tracee, WARNING, INTERNAL, "option \"--fake-proc\" discarded");
+		return 0;
+	}
+
+	/* Automatically bind /proc to provide virtual /proc access */
+	/* This ensures /proc is accessible even when using -r without explicit -b /proc */
+	new_binding(tracee, "/proc", NULL, false);
+	
+	note(tracee, INFO, USER, "Fake PID namespace enabled with virtual /proc");
+	
+	return 0;
+}
+
+/**
  * Initialize @tracee->qemu.
  */
 static int post_initialize_exe(Tracee *tracee, const Cli *cli UNUSED,
