@@ -83,7 +83,8 @@ static void modify_proc_stat(Tracee *tracee, const char *original_path, char *tr
 	size_t len = 0;
 	ssize_t read;
 
-	if ((read = getline(&line, &len, original_fp)) != -1) {
+	read = getline(&line, &len, original_fp);
+	if (read != -1) {
 		/* /proc/pid/stat format: pid (comm) state ppid ... */
 		/* Find the first space to locate where the PID ends */
 		char *space = strchr(line, ' ');
@@ -93,11 +94,12 @@ static void modify_proc_stat(Tracee *tracee, const char *original_path, char *tr
 		}
 	}
 
+	/* Always clean up resources */
 	free(line);
 	fclose(temp_fp);
 	fclose(original_fp);
 
-	/* Replace the path */
+	/* Replace the path with temp file path */
 	strncpy(translated_path, temp_path, PATH_MAX - 1);
 	translated_path[PATH_MAX - 1] = '\0';
 }
@@ -144,11 +146,12 @@ static void modify_proc_status(Tracee *tracee, const char *original_path, char *
 		}
 	}
 
+	/* Always clean up resources */
 	free(line);
 	fclose(temp_fp);
 	fclose(original_fp);
 
-	/* Replace the path */
+	/* Replace the path with temp file path */
 	strncpy(translated_path, temp_path, PATH_MAX - 1);
 	translated_path[PATH_MAX - 1] = '\0';
 }
@@ -251,6 +254,9 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 					if (last_slash != NULL) {
 						const char *new_suffix = last_slash + 1;
 						if (strcmp(new_suffix, "stat") == 0) {
+							/* Use translated_path for both input and output - the function
+							 * reads the original file, creates a temp file with modified content,
+							 * then updates translated_path to point to the temp file */
 							modify_proc_stat(tracee, translated_path, translated_path, config->root_pid);
 						} else if (strcmp(new_suffix, "status") == 0) {
 							modify_proc_status(tracee, translated_path, translated_path, config->root_pid);
