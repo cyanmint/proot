@@ -9,62 +9,55 @@ on:
 
 jobs:
   build-arm64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-arm64
     permissions:
       contents: read
+    container:
+      image: docker.io/termux/docker-termux
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Install dependencies and build
+      - name: Install dependencies
         run: |
-          docker run --platform linux/arm64 --rm \
-            -v "$PWD:/workspace" \
-            -w /workspace \
-            docker.io/termux/docker-termux \
-            sh -c '
-              # Install build dependencies
-              # Note: Termux packages include dev files by default, while Debian/Ubuntu require -dev suffix
-              if command -v pkg > /dev/null 2>&1; then
-                # Termux package manager
-                pkg update -y
-                pkg install -y libtalloc clang make
-              elif command -v apt-get > /dev/null 2>&1; then
-                # Debian/Ubuntu package manager
-                apt-get update -qq
-                apt-get install -y libtalloc-dev gcc make
-              else
-                echo "No supported package manager found"
-                exit 1
-              fi
+          # Install build dependencies
+          # Note: Termux packages include dev files by default, while Debian/Ubuntu require -dev suffix
+          if command -v pkg > /dev/null 2>&1; then
+            # Termux package manager
+            pkg update -y
+            pkg install -y libtalloc clang make
+          elif command -v apt-get > /dev/null 2>&1; then
+            # Debian/Ubuntu package manager
+            apt-get update -qq
+            apt-get install -y libtalloc-dev gcc make
+          else
+            echo "No supported package manager found"
+            exit 1
+          fi
 
-              # Build dynamic version
-              cd src
-              make clean || true  # First build may have nothing to clean
-              make
-              cp proot proot-dynamic
+      - name: Build dynamic version
+        run: |
+          cd src
+          make clean || true  # First build may have nothing to clean
+          make
+          cp proot proot-dynamic
 
-              # Build static version
-              make clean
-              # Override LDFLAGS to include -static flag
-              # Note: We explicitly include all original LDFLAGS from the Makefile plus -static
-              # Cannot use LDFLAGS="$(LDFLAGS) -static" as it causes recursive variable reference
-              make LDFLAGS="-ltalloc -Wl,-z,noexecstack -static"
-              cp proot proot-static
+      - name: Build static version
+        run: |
+          cd src
+          make clean
+          # Override LDFLAGS to include -static flag
+          # Note: We explicitly include all original LDFLAGS from the Makefile plus -static
+          # Cannot use LDFLAGS="$(LDFLAGS) -static" as it causes recursive variable reference
+          make LDFLAGS="-ltalloc -Wl,-z,noexecstack -static"
+          cp proot proot-static
 
-              # Verify builds
-              file proot-dynamic proot-static
-              ls -lh proot-dynamic proot-static
-            '
+      - name: Verify builds
+        run: |
+          file src/proot-dynamic
+          file src/proot-static
+          ls -lh src/proot-dynamic src/proot-static
 
       - name: Upload dynamic build artifact
         uses: actions/upload-artifact@v4
