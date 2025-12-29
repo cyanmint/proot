@@ -30,6 +30,7 @@
 #include <linux/limits.h> /* PATH_MAX, */
 
 #include "extension/extension.h"
+#include "extension/fake_pid0/fake_pid0.h"
 #include "syscall/syscall.h"
 #include "syscall/sysnum.h"
 #include "syscall/seccomp.h"
@@ -110,7 +111,6 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 	}
 
 	case TRANSLATED_PATH: {
-		Tracee *tracee = TRACEE(extension);
 		Config *config;
 		char *translated_path = (char *) data1;
 		char new_path[PATH_MAX];
@@ -236,4 +236,26 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 	default:
 		return 0;
 	}
+}
+
+/**
+ * Check if the given tracee is the root tracee with fake_pid0 enabled.
+ * Returns true if this tracee should see itself as PID 1.
+ */
+bool is_fake_pid0_root_tracee(const Tracee *tracee)
+{
+	Extension *extension;
+	Config *config;
+
+	if (tracee == NULL)
+		return false;
+
+	/* Note: get_extension doesn't modify the tracee, but doesn't take const.
+	 * Safe to cast away const here. */
+	extension = get_extension((Tracee *)tracee, fake_pid0_callback);
+	if (extension == NULL || extension->config == NULL)
+		return false;
+
+	config = talloc_get_type_abort(extension->config, Config);
+	return config->is_root_tracee;
 }

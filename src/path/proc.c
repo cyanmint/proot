@@ -30,6 +30,8 @@
 #include "tracee/tracee.h"
 #include "path/path.h"
 #include "path/binding.h"
+#include "extension/fake_pid0/fake_pid0.h"
+#include "cli/note.h"
 
 /**
  * This function emulates the @result of readlink("@base/@component")
@@ -61,7 +63,15 @@ Action readlink_proc(const Tracee *tracee, char result[PATH_MAX],
 		if (strcmp(component, "self") != 0)
 			return DEFAULT;
 
-		status = snprintf(result, PATH_MAX, "/proc/%d", tracee->pid);
+		/* If fake_pid0 is enabled and this is the root tracee,
+		 * substitute with "/proc/1" instead of the real PID.
+		 * The fake_pid0 extension will then translate "/proc/1"
+		 * back to the real PID in the TRANSLATED_PATH event. */
+		if (is_fake_pid0_root_tracee(tracee)) {
+			status = snprintf(result, PATH_MAX, "/proc/1");
+		} else {
+			status = snprintf(result, PATH_MAX, "/proc/%d", tracee->pid);
+		}
 		if (status < 0 || status >= PATH_MAX)
 			return -EPERM;
 
