@@ -31,19 +31,22 @@ jobs:
 
   build-android-bionic:
     name: Build with Android Bionic (dynamic) - aarch64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm64
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
-    - name: Set up Android NDK
-      uses: nttld/setup-ndk@v1
-      with:
-        ndk-version: r26b
+    
+    - name: Pull Termux container
+      run: docker pull docker.io/termux/termux-docker:aarch64
         
-    - name: Build with Android NDK (aarch64)
-      run: ./scripts/build-android-aarch64.sh
+    - name: Build with Termux container (dynamic, aarch64)
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          docker.io/termux/termux-docker:aarch64 \
+          bash -c "cd /workspace && bash ./scripts/build-termux-android-dynamic-aarch64.sh"
         
     - name: Upload Android binary
       uses: actions/upload-artifact@v6
@@ -53,19 +56,22 @@ jobs:
 
   build-android-static:
     name: Build with Android Bionic (static) - aarch64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm64
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
-    - name: Set up Android NDK
-      uses: nttld/setup-ndk@v1
-      with:
-        ndk-version: r26b
+    
+    - name: Pull Termux container
+      run: docker pull docker.io/termux/termux-docker:aarch64
         
-    - name: Build with Android NDK (static, aarch64)
-      run: ./scripts/build-android-static-aarch64.sh
+    - name: Build with Termux container (static, aarch64)
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          docker.io/termux/termux-docker:aarch64 \
+          bash -c "cd /workspace && bash ./scripts/build-termux-android-static-aarch64.sh"
         
     - name: Upload Android static binary
       uses: actions/upload-artifact@v6

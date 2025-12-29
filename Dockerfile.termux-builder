@@ -1,0 +1,20 @@
+# Dockerfile for Termux aarch64 build environment with pre-installed tools
+# Build this on an arm64 system or using buildx with proper network setup
+FROM docker.io/termux/termux-docker:aarch64
+
+# Install build dependencies
+# This Dockerfile should be built on a system with working DNS for Termux repos
+RUN pkg update -y && \
+    pkg install -y clang make wget python git file && \
+    pkg clean
+
+WORKDIR /workspace
+
+# Set environment to use clang by default
+ENV CC=clang \
+    AR=llvm-ar \
+    RANLIB=llvm-ranlib \
+    LD=clang \
+    STRIP=llvm-strip \
+    OBJCOPY=llvm-objcopy \
+    OBJDUMP=llvm-objdump
