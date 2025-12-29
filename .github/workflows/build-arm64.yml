@@ -23,6 +23,11 @@ jobs:
           unzip -q android-ndk-r26d-linux.zip
           echo "$PWD/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
+      - name: Set up QEMU for testing
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Download and extract Termux libtalloc packages
         run: |
           wget https://packages-cf.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.3_aarch64.deb
@@ -66,14 +71,24 @@ jobs:
           file src/proot-static
           ls -lh src/proot-dynamic src/proot-static
 
+      - name: Test static build in Termux container
+        continue-on-error: true
+        run: |
+          # Test the static build in actual Termux environment
+          docker run --platform linux/arm64 --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            termux/termux-docker:aarch64 \
+            bash -c './src/proot-static --version && echo "✓ Static build works in Termux!"'
+
       - name: Upload dynamic build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: proot-aarch64-dynamic
           path: src/proot-dynamic
 
       - name: Upload static build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: proot-aarch64-static
           path: src/proot-static
