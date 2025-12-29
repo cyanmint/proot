@@ -460,21 +460,21 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 			    fake_pid_long > 0 && fake_pid_long < INT_MAX) {
 				pid_t fake_pid_arg = (pid_t)fake_pid_long;
 				
-				/* Check if this is asking for a fake PID stat/status */
-				const char *suffix_start = endptr;
-				if (*suffix_start == '/' && 
-				    (strcmp(suffix_start, "/stat") == 0 || strcmp(suffix_start, "/status") == 0)) {
+				/* Convert fake PID to real PID for ANY /proc/<fake_pid>/ access */
+				pid_t real_pid_arg = fake_to_real_pid(tracee, fake_pid_arg);
+				
+				if (real_pid_arg > 0) {
+					const char *suffix_start = endptr;
 					
-					/* Convert fake PID to real PID */
-					pid_t real_pid_arg = fake_to_real_pid(tracee, fake_pid_arg);
-					
-					if (real_pid_arg > 0) {
-						/* Translate path to use real PID */
-						status = snprintf(new_path, PATH_MAX, "/proc/%d%s", real_pid_arg, suffix_start);
-						if (status >= 0 && status < PATH_MAX) {
-							strcpy(translated_path, new_path);
+					/* Translate path to use real PID */
+					status = snprintf(new_path, PATH_MAX, "/proc/%d%s", real_pid_arg, suffix_start);
+					if (status >= 0 && status < PATH_MAX) {
+						strcpy(translated_path, new_path);
+						
+						/* If it's stat or status, modify the content to show fake PIDs */
+						if (*suffix_start == '/' && 
+						    (strcmp(suffix_start, "/stat") == 0 || strcmp(suffix_start, "/status") == 0)) {
 							
-							/* Now modify the content to show fake PIDs */
 							Tracee *target = find_tracee_by_fake_pid(tracee, fake_pid_arg);
 							
 							if (target != NULL) {
