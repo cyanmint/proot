@@ -418,14 +418,6 @@ static int handle_seccomp_event_common(Tracee *tracee)
 		restart_syscall_after_seccomp(tracee);
 		break;
 
-	case PR_chdir:
-	case PR_fchdir:
-		/* chdir and fchdir are fully handled by PRoot's syscall enter handler
-		 * which emulates them by updating the internal cwd state.
-		 * Just restart the syscall to let PRoot's handler process it. */
-		restart_syscall_after_seccomp(tracee);
-		break;
-
 	case PR_mkdir:
 		set_sysnum(tracee, PR_mkdirat);
 		poke_reg(tracee, SYSARG_3, peek_reg(tracee, CURRENT, SYSARG_2));
