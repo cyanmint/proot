@@ -30,7 +30,7 @@ jobs:
           docker run --platform linux/arm64 --rm \
             -v "$PWD:/workspace" \
             -w /workspace \
-            docker.io/termux/termux-root:aarch64 \
+            docker.io/termux/docker-termux \
             sh -c '
               # Install build dependencies
               # Note: Termux packages include dev files by default, while Debian/Ubuntu require -dev suffix
