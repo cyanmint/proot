@@ -779,16 +779,28 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 			}
 			break;
 
-		case PR_tgkill:
-			/* tgkill(tgid, tid, sig) - TGID is in SYSARG_1 */
-			pid_arg = peek_reg(tracee, ORIGINAL, SYSARG_1);
-			if (pid_arg > 0) {
-				pid_t real_pid = fake_to_real_pid(tracee, pid_arg);
-				if (real_pid > 0) {
-					poke_reg(tracee, SYSARG_1, real_pid);
+		case PR_tgkill: {
+			/* tgkill(tgid, tid, sig) - TGID is in SYSARG_1, TID is in SYSARG_2 */
+			pid_t tgid_arg = peek_reg(tracee, ORIGINAL, SYSARG_1);
+			pid_t tid_arg = peek_reg(tracee, ORIGINAL, SYSARG_2);
+			
+			/* Translate TGID (thread group ID) */
+			if (tgid_arg > 0) {
+				pid_t real_tgid = fake_to_real_pid(tracee, tgid_arg);
+				if (real_tgid > 0) {
+					poke_reg(tracee, SYSARG_1, real_tgid);
+				}
+			}
+			
+			/* Translate TID (thread ID) */
+			if (tid_arg > 0) {
+				pid_t real_tid = fake_to_real_pid(tracee, tid_arg);
+				if (real_tid > 0) {
+					poke_reg(tracee, SYSARG_2, real_tid);
 				}
 			}
 			break;
+		}
 
 		case PR_wait4:
 		case PR_waitpid:
