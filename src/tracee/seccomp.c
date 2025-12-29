@@ -149,16 +149,6 @@ static int handle_seccomp_event_common(Tracee *tracee)
 		restart_syscall_after_seccomp(tracee);
 		break;
 
-	case PR_execve:
-		set_sysnum(tracee, PR_execveat);
-		poke_reg(tracee, SYSARG_5, 0);
-		poke_reg(tracee, SYSARG_4, peek_reg(tracee, CURRENT, SYSARG_3));
-		poke_reg(tracee, SYSARG_3, peek_reg(tracee, CURRENT, SYSARG_2));
-		poke_reg(tracee, SYSARG_2, peek_reg(tracee, CURRENT, SYSARG_1));
-		poke_reg(tracee, SYSARG_1, AT_FDCWD);
-		restart_syscall_after_seccomp(tracee);
-		break;
-
 	case PR_accept:
 		set_sysnum(tracee, PR_accept4);
 		poke_reg(tracee, SYSARG_4, 0);

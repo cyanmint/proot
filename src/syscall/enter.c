@@ -130,7 +130,9 @@ int translate_syscall_enter(Tracee *tracee)
 
 	case PR_execveat:
 		if ((int) peek_reg(tracee, CURRENT, SYSARG_1) == AT_FDCWD) {
-			set_sysnum(tracee, PR_execve);
+			/* Convert arguments from execveat format to execve format
+			 * but keep the syscall as execveat to avoid triggering
+			 * seccomp on systems where execve is blocked. */
 			poke_reg(tracee, SYSARG_1, peek_reg(tracee, CURRENT, SYSARG_2));
 			poke_reg(tracee, SYSARG_2, peek_reg(tracee, CURRENT, SYSARG_3));
 			poke_reg(tracee, SYSARG_3, peek_reg(tracee, CURRENT, SYSARG_4));
