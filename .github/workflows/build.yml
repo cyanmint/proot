@@ -7,6 +7,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-glibc-static:
     name: Build with glibc (static) - aarch64
@@ -46,4 +49,26 @@ jobs:
       uses: actions/upload-artifact@v6
       with:
         name: proot-android-bionic-aarch64
+        path: src/proot
+
+  build-android-static:
+    name: Build with Android Bionic (static) - aarch64
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Android NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r26b
+        
+    - name: Build with Android NDK (static, aarch64)
+      run: ./scripts/build-android-static-aarch64.sh
+        
+    - name: Upload Android static binary
+      uses: actions/upload-artifact@v6
+      with:
+        name: proot-android-static-aarch64
         path: src/proot
