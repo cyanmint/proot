@@ -92,23 +92,24 @@ static void modify_proc_stat(Tracee *tracee, const char *original_path, char *tr
 		/* /proc/pid/stat format: pid (comm) state ppid ... */
 		/* Parse to extract command name and everything after PPID */
 		int real_ppid;
-		char comm[256];
+		char comm[512];  /* Increased buffer size for safety */
 		char state;
-		char rest[4096];
+		char rest[8192]; /* Increased buffer size for safety */
 		
 		/* Find the command name within parentheses */
 		char *paren_start = strchr(line, '(');
 		char *paren_end = strrchr(line, ')');
 		
 		if (paren_start && paren_end && paren_end > paren_start) {
-			/* Extract command name */
+			/* Extract command name with bounds checking */
 			size_t comm_len = paren_end - paren_start + 1;
 			if (comm_len < sizeof(comm)) {
 				strncpy(comm, paren_start, comm_len);
 				comm[comm_len] = '\0';
 				
-				/* Parse state and ppid after the closing paren */
-				if (sscanf(paren_end + 1, " %c %d %[^\n]", &state, &real_ppid, rest) >= 2) {
+				/* Parse state and ppid after the closing paren - with buffer limit */
+				rest[0] = '\0';  /* Initialize to empty string */
+				if (sscanf(paren_end + 1, " %c %d %8191[^\n]", &state, &real_ppid, rest) >= 2) {
 					/* Write fake PID, command, state, fake PPID, and the rest */
 					fprintf(temp_fp, "%d %s %c %d", fake_pid, comm, state, fake_ppid);
 					if (rest[0] != '\0') {
@@ -125,9 +126,8 @@ static void modify_proc_stat(Tracee *tracee, const char *original_path, char *tr
 	fclose(temp_fp);
 	fclose(original_fp);
 
-	/* Replace the path with temp file path */
-	strncpy(translated_path, temp_path, PATH_MAX - 1);
-	translated_path[PATH_MAX - 1] = '\0';
+	/* Replace the path with temp file path - use snprintf for safety */
+	snprintf(translated_path, PATH_MAX, "%s", temp_path);
 }
 
 /**
@@ -178,9 +178,8 @@ static void modify_proc_status(Tracee *tracee, const char *original_path, char *
 	fclose(temp_fp);
 	fclose(original_fp);
 
-	/* Replace the path with temp file path */
-	strncpy(translated_path, temp_path, PATH_MAX - 1);
-	translated_path[PATH_MAX - 1] = '\0';
+	/* Replace the path with temp file path - use snprintf for safety */
+	snprintf(translated_path, PATH_MAX, "%s", temp_path);
 }
 
 /**
