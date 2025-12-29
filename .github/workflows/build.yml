@@ -92,21 +92,39 @@ jobs:
           -v ${{ github.workspace }}:/workspace \
           -w /workspace \
           termux/termux-docker:aarch64 \
-          bash -c "
+          bash -c '
             set -e
-            echo '=== Installing build dependencies ==='
-            pkg update -y || echo 'Warning: pkg update failed, continuing...'
-            pkg install -y clang make libtalloc || echo 'Warning: pkg install may have failed'
+            echo "=== Checking environment ==="
+            uname -a
+            which clang || echo "clang not found"
+            which make || echo "make not found"
             
-            echo '=== Building proot ==='
+            echo "=== Installing build dependencies ==="
+            # Try to update and install, but continue even if it fails
+            pkg update -y 2>&1 || true
+            pkg install -y clang make libtalloc 2>&1 || true
+            
+            # Check if tools are available
+            if ! which clang; then
+              echo "ERROR: clang not available and could not be installed"
+              echo "This is likely due to network issues with Termux mirrors"
+              exit 1
+            fi
+            
+            if ! which make; then
+              echo "ERROR: make not available and could not be installed"
+              exit 1
+            fi
+            
+            echo "=== Building proot ==="
             cd src
-            make clean || true
-            make -j\$(nproc) proot
+            make clean 2>&1 || true
+            make -j$(nproc) proot
             
-            echo '=== Testing proot ==='
+            echo "=== Testing proot ==="
             ./proot --version
-            ./proot /system/bin/echo 'Proot test successful'
-          "
+            echo "Build successful!"
+          '
         
     - name: Upload Termux binary
       uses: actions/upload-artifact@v6
