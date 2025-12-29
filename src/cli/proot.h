@@ -280,6 +280,7 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
         { .class = "Extension options",
           .arguments = {
                 { .name = "-P", .separator = '\0', .value = NULL },
+                { .name = "-1", .separator = '\0', .value = NULL },
                 { .name = "--fake-pid1", .separator = '\0', .value = NULL },
                 { .name = NULL, .separator = '\0', .value = NULL } },
           .handler = handle_option_P,
@@ -287,7 +288,8 @@ Copyright (C) 2015 STMicroelectronics, licensed under GPL v2 or later.",
           .detail = "\tThis option makes getpid() and gettid() return 1 for the first\n\
 \tcontained process, making it think it is the init process. Child\n\
 \tprocesses will have their actual PIDs. When the first process calls\n\
-\texecve, the new program will also see itself as PID 1.",
+\texecve, the new program will also see itself as PID 1.\n\
+\tNote that the -1 option is the same as -P.",
         },
         { .class = "Extension options",
           .arguments = {

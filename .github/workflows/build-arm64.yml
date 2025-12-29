@@ -1,0 +1,94 @@
+name: Build ARM64
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Android NDK
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip
+          echo "$PWD/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Set up QEMU for testing
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Download and extract Termux libtalloc packages
+        run: |
+          wget https://packages-cf.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.3_aarch64.deb
+          wget https://packages-cf.termux.dev/apt/termux-main/pool/main/libt/libtalloc-static/libtalloc-static_2.4.3_aarch64.deb
+          dpkg-deb -x libtalloc_2.4.3_aarch64.deb termux-root
+          dpkg-deb -x libtalloc-static_2.4.3_aarch64.deb termux-root
+          echo "TALLOC_PREFIX=$PWD/termux-root/data/data/com.termux/files/usr" >> $GITHUB_ENV
+
+      - name: Build dynamic version
+        run: |
+          cd src
+          make clean || true
+          export CC=aarch64-linux-android34-clang
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          export STRIP=llvm-strip
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export CPPFLAGS="-I$TALLOC_PREFIX/include"
+          export LDFLAGS="-L$TALLOC_PREFIX/lib -ltalloc -Wl,-z,noexecstack"
+          make
+          cp proot proot-dynamic
+
+      - name: Build static version
+        run: |
+          cd src
+          make clean
+          export CC=aarch64-linux-android34-clang
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          export STRIP=llvm-strip
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export CPPFLAGS="-I$TALLOC_PREFIX/include"
+          make LDFLAGS="-L$TALLOC_PREFIX/lib -ltalloc -Wl,-z,noexecstack -static"
+          cp proot proot-static
+
+      - name: Verify builds
+        run: |
+          file src/proot-dynamic
+          file src/proot-static
+          ls -lh src/proot-dynamic src/proot-static
+
+      - name: Test static build in Termux container
+        continue-on-error: true
+        run: |
+          # Test the static build in actual Termux environment
+          docker run --platform linux/arm64 --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            termux/termux-docker:aarch64 \
+            bash -c './src/proot-static --version && echo "✓ Static build works in Termux!"'
+
+      - name: Upload dynamic build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: proot-aarch64-dynamic
+          path: src/proot-dynamic
+
+      - name: Upload static build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: proot-aarch64-static
+          path: src/proot-static

@@ -9,3 +9,6 @@
 
 *~
 android-ndk-*/
+*.core
+/src/proot-dynamic
+/src/proot-static
