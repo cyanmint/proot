@@ -3,7 +3,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/syscall.h>  /* __NR_memfd_create,  */
-#include <linux/ashmem.h> /* ASHMEM_GET_SIZE,  */
+#include "compat/linux/ashmem.h" /* ASHMEM_GET_SIZE,  */
 #include <linux/memfd.h>  /* MFD_CLOEXEC  */
 
 #include <talloc.h>

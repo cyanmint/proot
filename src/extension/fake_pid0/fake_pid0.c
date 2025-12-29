@@ -28,6 +28,8 @@
 #include <stdio.h>       /* snprintf, */
 #include <errno.h>       /* ENAMETOOLONG, */
 #include <linux/limits.h> /* PATH_MAX, */
+#include <stdlib.h>      /* strtol, */
+#include <ctype.h>       /* isdigit, */
 
 #include "extension/extension.h"
 #include "syscall/syscall.h"
@@ -35,6 +37,8 @@
 #include "syscall/seccomp.h"
 #include "tracee/tracee.h"
 #include "tracee/reg.h"
+#include "path/temp.h"   /* create_temp_file, */
+#include "attribute.h"   /* UNUSED, */
 
 typedef struct {
 	bool is_root_tracee;
@@ -53,6 +57,101 @@ static FilteredSysnum filtered_sysnums[] = {
 	{ PR_waitpid,	0 },
 	FILTERED_SYSNUM_END,
 };
+
+/**
+ * Modify /proc/<pid>/stat file to replace PID with 1
+ */
+static void modify_proc_stat(Tracee *tracee, const char *original_path, char *translated_path, pid_t real_pid UNUSED)
+{
+	FILE *original_fp = fopen(original_path, "r");
+	if (original_fp == NULL)
+		return;
+
+	const char *temp_path = create_temp_file(tracee->ctx, "proc-stat");
+	if (temp_path == NULL) {
+		fclose(original_fp);
+		return;
+	}
+
+	FILE *temp_fp = fopen(temp_path, "w");
+	if (temp_fp == NULL) {
+		fclose(original_fp);
+		return;
+	}
+
+	char *line = NULL;
+	size_t len = 0;
+	ssize_t read;
+
+	if ((read = getline(&line, &len, original_fp)) != -1) {
+		/* /proc/pid/stat format: pid (comm) state ppid ... */
+		/* Find the first space to locate where the PID ends */
+		char *space = strchr(line, ' ');
+		if (space != NULL) {
+			/* Write "1" followed by the rest of the line */
+			fprintf(temp_fp, "1%s", space);
+		}
+	}
+
+	free(line);
+	fclose(temp_fp);
+	fclose(original_fp);
+
+	/* Replace the path */
+	strncpy(translated_path, temp_path, PATH_MAX - 1);
+	translated_path[PATH_MAX - 1] = '\0';
+}
+
+/**
+ * Modify /proc/<pid>/status file to replace Pid, Tgid, PPid with fake values
+ */
+static void modify_proc_status(Tracee *tracee, const char *original_path, char *translated_path, pid_t real_pid UNUSED)
+{
+	FILE *original_fp = fopen(original_path, "r");
+	if (original_fp == NULL)
+		return;
+
+	const char *temp_path = create_temp_file(tracee->ctx, "proc-status");
+	if (temp_path == NULL) {
+		fclose(original_fp);
+		return;
+	}
+
+	FILE *temp_fp = fopen(temp_path, "w");
+	if (temp_fp == NULL) {
+		fclose(original_fp);
+		return;
+	}
+
+	char *line = NULL;
+	size_t len = 0;
+	ssize_t read;
+
+	while ((read = getline(&line, &len, original_fp)) != -1) {
+		/* Replace Pid, Tgid, and PPid fields */
+		if (strncmp(line, "Pid:", 4) == 0) {
+			fprintf(temp_fp, "Pid:\t1\n");
+		} else if (strncmp(line, "Tgid:", 5) == 0) {
+			fprintf(temp_fp, "Tgid:\t1\n");
+		} else if (strncmp(line, "PPid:", 5) == 0) {
+			fprintf(temp_fp, "PPid:\t0\n");
+		} else if (strncmp(line, "NSpid:", 6) == 0) {
+			fprintf(temp_fp, "NSpid:\t1\n");
+		} else if (strncmp(line, "NStgid:", 7) == 0) {
+			fprintf(temp_fp, "NStgid:\t1\n");
+		} else {
+			fputs(line, temp_fp);
+		}
+	}
+
+	free(line);
+	fclose(temp_fp);
+	fclose(original_fp);
+
+	/* Replace the path */
+	strncpy(translated_path, temp_path, PATH_MAX - 1);
+	translated_path[PATH_MAX - 1] = '\0';
+}
 
 /**
  * Handler for this @extension.  It is triggered each time an @event
@@ -114,7 +213,9 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		Config *config;
 		char *translated_path = (char *) data1;
 		char new_path[PATH_MAX];
+		char pid_str[32];
 		int status;
+		bool was_proc_1 = false;
 
 		/* Check if config exists */
 		if (extension->config == NULL || translated_path == NULL)
@@ -123,21 +224,65 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		config = talloc_get_type_abort(extension->config, Config);
 
 		/* Check if the path starts with "/proc/1" or is exactly "/proc/1" */
-		if (strncmp(translated_path, "/proc/1", 7) != 0)
-			return 0;
+		if (strncmp(translated_path, "/proc/1", 7) == 0) {
+			/* Check if it's exactly "/proc/1" or "/proc/1/" or "/proc/1/..." */
+			if (translated_path[7] == '\0' || translated_path[7] == '/') {
+				const char *suffix = translated_path + 7;
+				
+				/* Check if it's /proc/1/stat or /proc/1/status before translation */
+				if (strcmp(suffix, "/stat") == 0 || strcmp(suffix, "/status") == 0) {
+					/* Remember that this was originally /proc/1/stat or /proc/1/status */
+					was_proc_1 = true;
+				}
+				
+				/* Replace "/proc/1" with "/proc/{root_pid}" */
+				status = snprintf(new_path, PATH_MAX, "/proc/%d%s", 
+						  config->root_pid, translated_path + 7);
+				if (status < 0 || status >= PATH_MAX)
+					return -ENAMETOOLONG;
 
-		/* Check if it's exactly "/proc/1" or "/proc/1/" or "/proc/1/..." */
-		if (translated_path[7] != '\0' && translated_path[7] != '/')
-			return 0;
+				/* Replace the translated path */
+				strcpy(translated_path, new_path);
+				
+				/* If it was /proc/1/stat or /proc/1/status, modify the content */
+				if (was_proc_1) {
+					/* Recalculate suffix after path replacement */
+					char *last_slash = strrchr(translated_path, '/');
+					if (last_slash != NULL) {
+						const char *new_suffix = last_slash + 1;
+						if (strcmp(new_suffix, "stat") == 0) {
+							modify_proc_stat(tracee, translated_path, translated_path, config->root_pid);
+						} else if (strcmp(new_suffix, "status") == 0) {
+							modify_proc_status(tracee, translated_path, translated_path, config->root_pid);
+						}
+					}
+				}
+				return 0;
+			}
+		}
 
-		/* Replace "/proc/1" with "/proc/{root_pid}" */
-		status = snprintf(new_path, PATH_MAX, "/proc/%d%s", 
-				  config->root_pid, translated_path + 7);
-		if (status < 0 || status >= PATH_MAX)
-			return -ENAMETOOLONG;
+		/* Check if this tracee is the root tracee and is reading its own /proc files */
+		/* When root tracee reads /proc/self/stat, it becomes /proc/<root_pid>/stat */
+		if (config->is_root_tracee) {
+			snprintf(pid_str, sizeof(pid_str), "/proc/%d/", tracee->pid);
+			size_t pid_path_len = strlen(pid_str);
+			
+			if (strncmp(translated_path, pid_str, pid_path_len) == 0) {
+				const char *suffix = translated_path + pid_path_len;
+				
+				/* Check if it's the stat file */
+				if (strcmp(suffix, "stat") == 0) {
+					modify_proc_stat(tracee, translated_path, translated_path, config->root_pid);
+					return 0;
+				}
+				/* Check if it's the status file */
+				else if (strcmp(suffix, "status") == 0) {
+					modify_proc_status(tracee, translated_path, translated_path, config->root_pid);
+					return 0;
+				}
+			}
+		}
 
-		/* Replace the translated path */
-		strcpy(translated_path, new_path);
 		return 0;
 	}
 
