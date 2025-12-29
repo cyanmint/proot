@@ -20,6 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           # Install build dependencies
+          # Note: Termux packages include dev files by default, while Debian/Ubuntu require -dev suffix
           if command -v pkg > /dev/null 2>&1; then
             # Termux package manager
             pkg update -y
@@ -44,6 +45,8 @@ jobs:
         run: |
           cd src
           make clean
+          # Override LDFLAGS to include -static flag
+          # Note: We include the original LDFLAGS (-ltalloc -Wl,-z,noexecstack) plus -static
           make LDFLAGS="-ltalloc -Wl,-z,noexecstack -static"
           cp proot proot-static
 
