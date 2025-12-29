@@ -13,7 +13,7 @@ jobs:
     permissions:
       contents: read
     container:
-      image: docker.io/termux/docker-termux
+      image: docker.io/termux/docker-termux:aarch64
 
     steps:
       - name: Checkout code
