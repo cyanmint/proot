@@ -81,6 +81,8 @@ static FilteredSysnum filtered_sysnums[] = {
 	{ PR_waitpid,	0 },
 	{ PR_getdents,    FILTER_SYSEXIT },
 	{ PR_getdents64,  FILTER_SYSEXIT },
+	{ PR_readlink,    FILTER_SYSEXIT },
+	{ PR_readlinkat,  FILTER_SYSEXIT },
 	FILTERED_SYSNUM_END,
 };
 
@@ -789,6 +791,54 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		if (sysnum == PR_getppid) {
 			pid_t fake_ppid = get_fake_ppid(tracee, config);
 			poke_reg(tracee, SYSARG_RESULT, fake_ppid);
+			return 0;
+		}
+
+		/* Handle readlink/readlinkat for /proc/self */
+		if (sysnum == PR_readlink || sysnum == PR_readlinkat) {
+			word_t result = peek_reg(tracee, CURRENT, SYSARG_RESULT);
+			if ((int)result <= 0)
+				return 0;
+			
+			char path[PATH_MAX];
+			char buf[PATH_MAX];
+			word_t buf_addr, path_addr;
+			int status;
+			
+			/* Get arguments based on syscall */
+			if (sysnum == PR_readlink) {
+				path_addr = peek_reg(tracee, ORIGINAL, SYSARG_1);
+				buf_addr = peek_reg(tracee, ORIGINAL, SYSARG_2);
+			} else { /* PR_readlinkat */
+				path_addr = peek_reg(tracee, ORIGINAL, SYSARG_2);
+				buf_addr = peek_reg(tracee, ORIGINAL, SYSARG_3);
+			}
+			
+			/* Read the path */
+			status = read_string(tracee, path, path_addr, PATH_MAX);
+			if (status < 0)
+				return 0;
+			
+			/* Check if it's /proc/self or /proc/thread-self */
+			if (strcmp(path, "/proc/self") == 0 || strcmp(path, "/proc/thread-self") == 0) {
+				/* Read current buffer content */
+				status = read_data(tracee, buf, buf_addr, result);
+				if (status < 0)
+					return 0;
+				
+				/* Check if buffer contains a PID (should be tracee->pid) */
+				pid_t real_pid = atoi(buf);
+				if (real_pid == tracee->pid) {
+					/* Replace with fake PID */
+					int len = snprintf(buf, PATH_MAX, "%d", config->fake_pid);
+					if (len > 0 && len < PATH_MAX) {
+						status = write_data(tracee, buf_addr, buf, len);
+						if (status >= 0) {
+							poke_reg(tracee, SYSARG_RESULT, len);
+						}
+					}
+				}
+			}
 			return 0;
 		}
 
