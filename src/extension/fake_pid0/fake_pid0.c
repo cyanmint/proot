@@ -783,7 +783,6 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 			/* tgkill(tgid, tid, sig) - TGID is in SYSARG_1, TID is in SYSARG_2 */
 			pid_t tgid_arg = peek_reg(tracee, ORIGINAL, SYSARG_1);
 			pid_t tid_arg = peek_reg(tracee, ORIGINAL, SYSARG_2);
-			
 			/* Translate TGID (thread group ID) */
 			if (tgid_arg > 0) {
 				pid_t real_tgid = fake_to_real_pid(tracee, tgid_arg);
@@ -791,7 +790,6 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 					poke_reg(tracee, SYSARG_1, real_tgid);
 				}
 			}
-			
 			/* Translate TID (thread ID) */
 			if (tid_arg > 0) {
 				pid_t real_tid = fake_to_real_pid(tracee, tid_arg);
