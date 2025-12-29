@@ -376,9 +376,9 @@ static int handle_option_fake_proc(Tracee *tracee, const Cli *cli UNUSED, const 
 		return 0;
 	}
 
-	/* Mark that we want a virtual /proc */
-	/* This will be handled in the fake_pid0 extension */
-	/* For now, just enable fake PID - the extension already handles /proc */
+	/* Automatically bind /proc to provide virtual /proc access */
+	/* This ensures /proc is accessible even when using -r without explicit -b /proc */
+	new_binding(tracee, "/proc", NULL, false);
 	
 	note(tracee, INFO, USER, "Fake PID namespace enabled with virtual /proc");
 	
