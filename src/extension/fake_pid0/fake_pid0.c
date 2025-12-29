@@ -23,6 +23,7 @@
 #include <stdint.h>      /* intptr_t, */
 #include <stdbool.h>     /* bool, true, false */
 #include <sys/types.h>   /* pid_t, */
+#include <unistd.h>      /* getpid, */
 #include <talloc.h>      /* talloc, */
 #include <string.h>      /* strncmp, strcpy, */
 #include <stdio.h>       /* snprintf, */
