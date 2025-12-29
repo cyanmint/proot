@@ -30,6 +30,7 @@
 #include <linux/limits.h> /* PATH_MAX, */
 #include <stdlib.h>      /* strtol, */
 #include <ctype.h>       /* isdigit, */
+#include <limits.h>      /* INT_MAX, */
 
 #include "extension/extension.h"
 #include "syscall/syscall.h"
@@ -42,7 +43,9 @@
 
 typedef struct {
 	bool is_root_tracee;
-	pid_t root_pid;  /* Real PID of the root tracee */
+	pid_t root_pid;      /* Real PID of the root tracee */
+	pid_t fake_pid;      /* Fake PID assigned to this tracee */
+	pid_t next_fake_pid; /* Next fake PID to assign (only used by root) */
 } Config;
 
 /* List of syscalls handled by this extension.  */
@@ -59,9 +62,10 @@ static FilteredSysnum filtered_sysnums[] = {
 };
 
 /**
- * Modify /proc/<pid>/stat file to replace PID with 1
+ * Modify /proc/<pid>/stat file to replace PID with fake PID
  */
-static void modify_proc_stat(Tracee *tracee, const char *original_path, char *translated_path, pid_t real_pid UNUSED)
+static void modify_proc_stat(Tracee *tracee, const char *original_path, char *translated_path, 
+                              pid_t fake_pid, pid_t fake_ppid)
 {
 	FILE *original_fp = fopen(original_path, "r");
 	if (original_fp == NULL)
@@ -86,11 +90,33 @@ static void modify_proc_stat(Tracee *tracee, const char *original_path, char *tr
 	read = getline(&line, &len, original_fp);
 	if (read != -1) {
 		/* /proc/pid/stat format: pid (comm) state ppid ... */
-		/* Find the first space to locate where the PID ends */
-		char *space = strchr(line, ' ');
-		if (space != NULL) {
-			/* Write "1" followed by the rest of the line */
-			fprintf(temp_fp, "1%s", space);
+		/* Parse to extract command name and everything after PPID */
+		int real_ppid;
+		char comm[256];
+		char state;
+		char rest[4096];
+		
+		/* Find the command name within parentheses */
+		char *paren_start = strchr(line, '(');
+		char *paren_end = strrchr(line, ')');
+		
+		if (paren_start && paren_end && paren_end > paren_start) {
+			/* Extract command name */
+			size_t comm_len = paren_end - paren_start + 1;
+			if (comm_len < sizeof(comm)) {
+				strncpy(comm, paren_start, comm_len);
+				comm[comm_len] = '\0';
+				
+				/* Parse state and ppid after the closing paren */
+				if (sscanf(paren_end + 1, " %c %d %[^\n]", &state, &real_ppid, rest) >= 2) {
+					/* Write fake PID, command, state, fake PPID, and the rest */
+					fprintf(temp_fp, "%d %s %c %d", fake_pid, comm, state, fake_ppid);
+					if (rest[0] != '\0') {
+						fprintf(temp_fp, " %s", rest);
+					}
+					fprintf(temp_fp, "\n");
+				}
+			}
 		}
 	}
 
@@ -107,7 +133,8 @@ static void modify_proc_stat(Tracee *tracee, const char *original_path, char *tr
 /**
  * Modify /proc/<pid>/status file to replace Pid, Tgid, PPid with fake values
  */
-static void modify_proc_status(Tracee *tracee, const char *original_path, char *translated_path, pid_t real_pid UNUSED)
+static void modify_proc_status(Tracee *tracee, const char *original_path, char *translated_path, 
+                                pid_t fake_pid, pid_t fake_ppid)
 {
 	FILE *original_fp = fopen(original_path, "r");
 	if (original_fp == NULL)
@@ -130,17 +157,17 @@ static void modify_proc_status(Tracee *tracee, const char *original_path, char *
 	ssize_t read;
 
 	while ((read = getline(&line, &len, original_fp)) != -1) {
-		/* Replace Pid, Tgid, and PPid fields */
+		/* Replace Pid, Tgid, and PPid fields with fake values */
 		if (strncmp(line, "Pid:", 4) == 0) {
-			fprintf(temp_fp, "Pid:\t1\n");
+			fprintf(temp_fp, "Pid:\t%d\n", fake_pid);
 		} else if (strncmp(line, "Tgid:", 5) == 0) {
-			fprintf(temp_fp, "Tgid:\t1\n");
+			fprintf(temp_fp, "Tgid:\t%d\n", fake_pid);
 		} else if (strncmp(line, "PPid:", 5) == 0) {
-			fprintf(temp_fp, "PPid:\t0\n");
+			fprintf(temp_fp, "PPid:\t%d\n", fake_ppid);
 		} else if (strncmp(line, "NSpid:", 6) == 0) {
-			fprintf(temp_fp, "NSpid:\t1\n");
+			fprintf(temp_fp, "NSpid:\t%d\n", fake_pid);
 		} else if (strncmp(line, "NStgid:", 7) == 0) {
-			fprintf(temp_fp, "NStgid:\t1\n");
+			fprintf(temp_fp, "NStgid:\t%d\n", fake_pid);
 		} else {
 			fputs(line, temp_fp);
 		}
@@ -154,6 +181,122 @@ static void modify_proc_status(Tracee *tracee, const char *original_path, char *
 	/* Replace the path with temp file path */
 	strncpy(translated_path, temp_path, PATH_MAX - 1);
 	translated_path[PATH_MAX - 1] = '\0';
+}
+
+/**
+ * Get the root extension config (which stores the next_fake_pid counter)
+ */
+static Config *get_root_config(Tracee *tracee)
+{
+	/* Walk up the tracee tree to find the root */
+	Tracee *root = tracee;
+	while (root->parent != NULL)
+		root = root->parent;
+	
+	/* Get the extension from the root tracee */
+	Extension *root_ext = get_extension(root, fake_pid0_callback);
+	if (root_ext == NULL || root_ext->config == NULL)
+		return NULL;
+	
+	return talloc_get_type_abort(root_ext->config, Config);
+}
+
+/**
+ * Find a tracee by its real PID
+ */
+static Tracee *find_tracee_by_real_pid(Tracee *current_tracee, pid_t real_pid)
+{
+	/* Use the get_tracee helper which searches the global tracee list */
+	return get_tracee(current_tracee, real_pid, false);
+}
+
+/**
+ * Get fake PID for a given real PID
+ * Returns 0 if the PID is not in our namespace
+ */
+static pid_t real_to_fake_pid(Tracee *tracee, pid_t real_pid)
+{
+	/* Special case: PID 0 stays as 0 */
+	if (real_pid == 0)
+		return 0;
+	
+	/* Find the tracee with this real PID */
+	Tracee *target = find_tracee_by_real_pid(tracee, real_pid);
+	if (target == NULL) {
+		/* PID not in our namespace - return 0 to indicate "no such process" */
+		return 0;
+	}
+	
+	/* Get the fake PID from the target's config */
+	Extension *target_ext = get_extension(target, fake_pid0_callback);
+	if (target_ext == NULL || target_ext->config == NULL)
+		return 0;
+	
+	Config *target_config = talloc_get_type_abort(target_ext->config, Config);
+	return target_config->fake_pid;
+}
+
+/**
+ * Get real PID for a given fake PID
+ * Returns 0 if the fake PID is not found
+ */
+static pid_t fake_to_real_pid(Tracee *tracee, pid_t fake_pid);
+
+/**
+ * Helper to search for a tracee with a given fake PID
+ */
+static Tracee *find_tracee_by_fake_pid(Tracee *current_tracee UNUSED, pid_t fake_pid)
+{
+	Tracees *tracees_list = get_tracees_list_head();
+	Tracee *t;
+	
+	LIST_FOREACH(t, tracees_list, link) {
+		Extension *ext = get_extension(t, fake_pid0_callback);
+		if (ext != NULL && ext->config != NULL) {
+			Config *cfg = talloc_get_type_abort(ext->config, Config);
+			if (cfg->fake_pid == fake_pid)
+				return t;
+		}
+	}
+	
+	return NULL;
+}
+
+static pid_t fake_to_real_pid(Tracee *tracee, pid_t fake_pid)
+{
+	/* Special case: fake PID 0 stays as 0 */
+	if (fake_pid == 0)
+		return 0;
+	
+	/* Find the tracee with this fake PID */
+	Tracee *target = find_tracee_by_fake_pid(tracee, fake_pid);
+	if (target == NULL)
+		return 0;
+	
+	return target->pid;
+}
+
+/**
+ * Get the fake PPID for this tracee
+ */
+static pid_t get_fake_ppid(Tracee *tracee, Config *config)
+{
+	if (config->is_root_tracee) {
+		/* Root process has no parent (PPID = 0) */
+		return 0;
+	}
+	
+	/* Get parent's fake PID */
+	if (tracee->parent != NULL) {
+		Extension *parent_ext = get_extension(tracee->parent, fake_pid0_callback);
+		if (parent_ext != NULL && parent_ext->config != NULL) {
+			Config *parent_config = talloc_get_type_abort(parent_ext->config, Config);
+			return parent_config->fake_pid;
+		}
+	}
+	
+	/* Default to PID 1 if parent info not available */
+	return 1;
 }
 
 /**
@@ -177,6 +320,8 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		/* The first tracee to initialize this extension is the root */
 		config->is_root_tracee = true;
 		config->root_pid = tracee->pid;  /* Store real PID of root */
+		config->fake_pid = 1;            /* Root gets fake PID 1 */
+		config->next_fake_pid = 2;       /* Next child will get PID 2 */
 
 		extension->filtered_sysnums = filtered_sysnums;
 		return 0;
@@ -191,6 +336,8 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		Extension *parent = (Extension *) data1;
 		Config *parent_config;
 		Config *config;
+		Config *root_config;
+		Tracee *tracee = TRACEE(extension);
 
 		if (parent == NULL || parent->config == NULL)
 			return -1;
@@ -203,10 +350,19 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		config = talloc_get_type_abort(extension->config, Config);
 		
 		/* Child processes are not the root tracee */
-		/* Child processes are not the root tracee */
 		config->is_root_tracee = false;
 		/* Inherit the root PID from parent */
 		config->root_pid = parent_config->root_pid;
+		
+		/* Assign next available fake PID */
+		root_config = get_root_config(tracee);
+		if (root_config != NULL) {
+			config->fake_pid = root_config->next_fake_pid;
+			root_config->next_fake_pid++;
+		} else {
+			/* Fallback if we can't get root config */
+			config->fake_pid = tracee->pid;
+		}
 
 		return 0;
 	}
@@ -253,13 +409,18 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 					char *last_slash = strrchr(translated_path, '/');
 					if (last_slash != NULL) {
 						const char *new_suffix = last_slash + 1;
+						/* Get fake PIDs for the root process */
+						Config *root_config = get_root_config(tracee);
+						pid_t fake_pid = root_config ? root_config->fake_pid : 1;
+						pid_t fake_ppid = 0; /* Root has no parent */
+						
 						if (strcmp(new_suffix, "stat") == 0) {
 							/* Use translated_path for both input and output - the function
 							 * reads the original file, creates a temp file with modified content,
 							 * then updates translated_path to point to the temp file */
-							modify_proc_stat(tracee, translated_path, translated_path, config->root_pid);
+							modify_proc_stat(tracee, translated_path, translated_path, fake_pid, fake_ppid);
 						} else if (strcmp(new_suffix, "status") == 0) {
-							modify_proc_status(tracee, translated_path, translated_path, config->root_pid);
+							modify_proc_status(tracee, translated_path, translated_path, fake_pid, fake_ppid);
 						}
 					}
 				}
@@ -267,24 +428,73 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 			}
 		}
 
-		/* Check if this tracee is the root tracee and is reading its own /proc files */
-		/* When root tracee reads /proc/self/stat, it becomes /proc/<root_pid>/stat */
-		if (config->is_root_tracee) {
-			snprintf(pid_str, sizeof(pid_str), "/proc/%d/", tracee->pid);
-			size_t pid_path_len = strlen(pid_str);
+		/* Check if any tracee is reading its own /proc files */
+		/* When a tracee reads /proc/self/stat, it becomes /proc/<tracee_pid>/stat */
+		snprintf(pid_str, sizeof(pid_str), "/proc/%d/", tracee->pid);
+		size_t pid_path_len = strlen(pid_str);
+		
+		if (strncmp(translated_path, pid_str, pid_path_len) == 0) {
+			const char *suffix = translated_path + pid_path_len;
+			pid_t fake_pid = config->fake_pid;
+			pid_t fake_ppid = get_fake_ppid(tracee, config);
 			
-			if (strncmp(translated_path, pid_str, pid_path_len) == 0) {
-				const char *suffix = translated_path + pid_path_len;
+			/* Check if it's the stat file */
+			if (strcmp(suffix, "stat") == 0) {
+				modify_proc_stat(tracee, translated_path, translated_path, fake_pid, fake_ppid);
+				return 0;
+			}
+			/* Check if it's the status file */
+			else if (strcmp(suffix, "status") == 0) {
+				modify_proc_status(tracee, translated_path, translated_path, fake_pid, fake_ppid);
+				return 0;
+			}
+		}
+		
+		/* Handle /proc/<fake_pid>/ paths - translate fake PID to real PID */
+		/* This handles when a process reads another process's /proc files */
+		if (strncmp(translated_path, "/proc/", 6) == 0) {
+			char *endptr;
+			long fake_pid_long = strtol(translated_path + 6, &endptr, 10);
+			
+			/* Check if we successfully parsed a number and it's followed by / or end of string */
+			if (endptr != translated_path + 6 && (*endptr == '/' || *endptr == '\0') && 
+			    fake_pid_long > 0 && fake_pid_long < INT_MAX) {
+				pid_t fake_pid_arg = (pid_t)fake_pid_long;
 				
-				/* Check if it's the stat file */
-				if (strcmp(suffix, "stat") == 0) {
-					modify_proc_stat(tracee, translated_path, translated_path, config->root_pid);
-					return 0;
-				}
-				/* Check if it's the status file */
-				else if (strcmp(suffix, "status") == 0) {
-					modify_proc_status(tracee, translated_path, translated_path, config->root_pid);
-					return 0;
+				/* Check if this is asking for a fake PID stat/status */
+				const char *suffix_start = endptr;
+				if (*suffix_start == '/' && 
+				    (strcmp(suffix_start, "/stat") == 0 || strcmp(suffix_start, "/status") == 0)) {
+					
+					/* Convert fake PID to real PID */
+					pid_t real_pid_arg = fake_to_real_pid(tracee, fake_pid_arg);
+					
+					if (real_pid_arg > 0) {
+						/* Translate path to use real PID */
+						status = snprintf(new_path, PATH_MAX, "/proc/%d%s", real_pid_arg, suffix_start);
+						if (status >= 0 && status < PATH_MAX) {
+							strcpy(translated_path, new_path);
+							
+							/* Now modify the content to show fake PIDs */
+							Tracee *target = find_tracee_by_fake_pid(tracee, fake_pid_arg);
+							
+							if (target != NULL) {
+								Extension *target_ext = get_extension(target, fake_pid0_callback);
+								if (target_ext != NULL && target_ext->config != NULL) {
+									Config *target_config = talloc_get_type_abort(target_ext->config, Config);
+									pid_t target_fake_ppid = get_fake_ppid(target, target_config);
+									
+									if (strcmp(suffix_start, "/stat") == 0) {
+										modify_proc_stat(tracee, translated_path, translated_path, 
+										                 fake_pid_arg, target_fake_ppid);
+									} else if (strcmp(suffix_start, "/status") == 0) {
+										modify_proc_status(tracee, translated_path, translated_path, 
+										                   fake_pid_arg, target_fake_ppid);
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		}
@@ -294,7 +504,7 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 
 	case SYSCALL_ENTER_END: {
 		Tracee *tracee = TRACEE(extension);
-		Config *config;
+		Config *config UNUSED;
 		word_t sysnum;
 		pid_t pid_arg;
 
@@ -305,22 +515,28 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		config = talloc_get_type_abort(extension->config, Config);
 		sysnum = get_sysnum(tracee, ORIGINAL);
 
-		/* Translate PID 1 to root tracee's real PID for syscalls that take PID arguments */
+		/* Translate fake PIDs to real PIDs for syscalls that take PID arguments */
 		switch (sysnum) {
 		case PR_kill:
 		case PR_tkill:
 			/* kill(pid, sig) - PID is in SYSARG_1 */
 			pid_arg = peek_reg(tracee, ORIGINAL, SYSARG_1);
-			if (pid_arg == 1) {
-				poke_reg(tracee, SYSARG_1, config->root_pid);
+			if (pid_arg > 0) {
+				pid_t real_pid = fake_to_real_pid(tracee, pid_arg);
+				if (real_pid > 0) {
+					poke_reg(tracee, SYSARG_1, real_pid);
+				}
 			}
 			break;
 
 		case PR_tgkill:
 			/* tgkill(tgid, tid, sig) - TGID is in SYSARG_1 */
 			pid_arg = peek_reg(tracee, ORIGINAL, SYSARG_1);
-			if (pid_arg == 1) {
-				poke_reg(tracee, SYSARG_1, config->root_pid);
+			if (pid_arg > 0) {
+				pid_t real_pid = fake_to_real_pid(tracee, pid_arg);
+				if (real_pid > 0) {
+					poke_reg(tracee, SYSARG_1, real_pid);
+				}
 			}
 			break;
 
@@ -328,8 +544,11 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		case PR_waitpid:
 			/* waitpid(pid, ...) - PID is in SYSARG_1 */
 			pid_arg = peek_reg(tracee, ORIGINAL, SYSARG_1);
-			if (pid_arg == 1) {
-				poke_reg(tracee, SYSARG_1, config->root_pid);
+			if (pid_arg > 0) {
+				pid_t real_pid = fake_to_real_pid(tracee, pid_arg);
+				if (real_pid > 0) {
+					poke_reg(tracee, SYSARG_1, real_pid);
+				}
 			}
 			break;
 
@@ -352,32 +571,16 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 		config = talloc_get_type_abort(extension->config, Config);
 		sysnum = get_sysnum(tracee, ORIGINAL);
 
-		/* Handle getpid and gettid for root tracee */
+		/* Handle getpid and gettid - return fake PID for this tracee */
 		if (sysnum == PR_getpid || sysnum == PR_gettid) {
-			if (config->is_root_tracee) {
-				poke_reg(tracee, SYSARG_RESULT, 1);
-			}
+			poke_reg(tracee, SYSARG_RESULT, config->fake_pid);
 			return 0;
 		}
 
-		/* Handle getppid */
+		/* Handle getppid - return fake PPID */
 		if (sysnum == PR_getppid) {
-			/* If this is the root tracee, it should see PPID=0 (like real init) */
-			if (config->is_root_tracee) {
-				poke_reg(tracee, SYSARG_RESULT, 0);
-				return 0;
-			}
-			
-			/* For non-root processes, return 1 if parent is root tracee */
-			if (tracee->parent != NULL) {
-				Extension *parent_ext = get_extension(tracee->parent, fake_pid0_callback);
-				if (parent_ext != NULL && parent_ext->config != NULL) {
-					Config *parent_config = talloc_get_type_abort(parent_ext->config, Config);
-					if (parent_config->is_root_tracee) {
-						poke_reg(tracee, SYSARG_RESULT, 1);
-					}
-				}
-			}
+			pid_t fake_ppid = get_fake_ppid(tracee, config);
+			poke_reg(tracee, SYSARG_RESULT, fake_ppid);
 			return 0;
 		}
 
