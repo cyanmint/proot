@@ -1,0 +1,66 @@
+name: Build ARM64
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest-arm64
+    container:
+      image: docker.io/termux/termux-root:aarch64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          # Install build dependencies
+          if command -v pkg > /dev/null 2>&1; then
+            # Termux package manager
+            pkg update -y
+            pkg install -y libtalloc clang make
+          elif command -v apt-get > /dev/null 2>&1; then
+            # Debian/Ubuntu package manager
+            apt-get update -qq
+            apt-get install -y libtalloc-dev gcc make
+          else
+            echo "No supported package manager found"
+            exit 1
+          fi
+
+      - name: Build dynamic version
+        run: |
+          cd src
+          make clean || true
+          make
+          cp proot proot-dynamic
+
+      - name: Build static version
+        run: |
+          cd src
+          make clean
+          make LDFLAGS="-ltalloc -Wl,-z,noexecstack -static"
+          cp proot proot-static
+
+      - name: Verify builds
+        run: |
+          file src/proot-dynamic
+          file src/proot-static
+          ls -lh src/proot-dynamic src/proot-static
+
+      - name: Upload dynamic build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proot-aarch64-dynamic
+          path: src/proot-dynamic
+
+      - name: Upload static build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proot-aarch64-static
+          path: src/proot-static
