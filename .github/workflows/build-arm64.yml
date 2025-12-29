@@ -37,7 +37,7 @@ jobs:
       - name: Build dynamic version
         run: |
           cd src
-          make clean || true
+          make clean || true  # First build may have nothing to clean
           make
           cp proot proot-dynamic
 
@@ -46,7 +46,8 @@ jobs:
           cd src
           make clean
           # Override LDFLAGS to include -static flag
-          # Note: We include the original LDFLAGS (-ltalloc -Wl,-z,noexecstack) plus -static
+          # Note: We explicitly include all original LDFLAGS from the Makefile plus -static
+          # Cannot use LDFLAGS='$(LDFLAGS) -static' as it causes recursive variable reference
           make LDFLAGS="-ltalloc -Wl,-z,noexecstack -static"
           cp proot proot-static
 
