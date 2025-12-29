@@ -72,3 +72,44 @@ jobs:
       with:
         name: proot-android-static-aarch64
         path: src/proot
+
+  build-termux-aarch64:
+    name: Build and Test in Termux (aarch64)
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+        
+    - name: Build proot in Termux container
+      run: |
+        docker run --rm --platform linux/arm64 \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          termux/termux-docker:aarch64 \
+          bash -c "
+            set -e
+            echo '=== Installing build dependencies ==='
+            pkg update -y || echo 'Warning: pkg update failed, continuing...'
+            pkg install -y clang make libtalloc || echo 'Warning: pkg install may have failed'
+            
+            echo '=== Building proot ==='
+            cd src
+            make clean || true
+            make -j\$(nproc) proot
+            
+            echo '=== Testing proot ==='
+            ./proot --version
+            ./proot /system/bin/echo 'Proot test successful'
+          "
+        
+    - name: Upload Termux binary
+      uses: actions/upload-artifact@v6
+      with:
+        name: proot-termux-aarch64
+        path: src/proot
