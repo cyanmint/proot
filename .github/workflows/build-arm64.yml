@@ -9,37 +9,40 @@ on:
 
 jobs:
   build-arm64:
-    runs-on: ubuntu-latest-arm64
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-    container:
-      image: docker.io/termux/docker-termux:aarch64
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Set up Android NDK
         run: |
-          # Install build dependencies
-          # Note: Termux packages include dev files by default, while Debian/Ubuntu require -dev suffix
-          if command -v pkg > /dev/null 2>&1; then
-            # Termux package manager
-            pkg update -y
-            pkg install -y libtalloc clang make
-          elif command -v apt-get > /dev/null 2>&1; then
-            # Debian/Ubuntu package manager
-            apt-get update -qq
-            apt-get install -y libtalloc-dev gcc make
-          else
-            echo "No supported package manager found"
-            exit 1
-          fi
+          wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+          unzip -q android-ndk-r26d-linux.zip
+          echo "$PWD/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Download and extract Termux libtalloc packages
+        run: |
+          wget https://packages-cf.termux.dev/apt/termux-main/pool/main/libt/libtalloc/libtalloc_2.4.3_aarch64.deb
+          wget https://packages-cf.termux.dev/apt/termux-main/pool/main/libt/libtalloc-static/libtalloc-static_2.4.3_aarch64.deb
+          dpkg-deb -x libtalloc_2.4.3_aarch64.deb termux-root
+          dpkg-deb -x libtalloc-static_2.4.3_aarch64.deb termux-root
+          echo "TALLOC_PREFIX=$PWD/termux-root/data/data/com.termux/files/usr" >> $GITHUB_ENV
 
       - name: Build dynamic version
         run: |
           cd src
-          make clean || true  # First build may have nothing to clean
+          make clean || true
+          export CC=aarch64-linux-android34-clang
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          export STRIP=llvm-strip
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export CPPFLAGS="-I$TALLOC_PREFIX/include"
+          export LDFLAGS="-L$TALLOC_PREFIX/lib -ltalloc -Wl,-z,noexecstack"
           make
           cp proot proot-dynamic
 
@@ -47,10 +50,14 @@ jobs:
         run: |
           cd src
           make clean
-          # Override LDFLAGS to include -static flag
-          # Note: We explicitly include all original LDFLAGS from the Makefile plus -static
-          # Cannot use LDFLAGS="$(LDFLAGS) -static" as it causes recursive variable reference
-          make LDFLAGS="-ltalloc -Wl,-z,noexecstack -static"
+          export CC=aarch64-linux-android34-clang
+          export AR=llvm-ar
+          export RANLIB=llvm-ranlib
+          export STRIP=llvm-strip
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export CPPFLAGS="-I$TALLOC_PREFIX/include"
+          make LDFLAGS="-L$TALLOC_PREFIX/lib -ltalloc -Wl,-z,noexecstack -static"
           cp proot proot-static
 
       - name: Verify builds
