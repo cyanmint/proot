@@ -21,6 +21,7 @@
  */
 
 #include <stdint.h>      /* intptr_t, */
+#include <stddef.h>      /* offsetof, */
 #include <stdbool.h>     /* bool, true, false */
 #include <sys/types.h>   /* pid_t, */
 #include <unistd.h>      /* getpid, */
@@ -404,14 +405,13 @@ static int handle_getdents_exit(Tracee *tracee)
 				pid_t fake_pid = real_to_fake_pid(tracee, real_pid);
 				
 				if (fake_pid > 0) {
-					/* This is a tracked process - modify the entry */
-					
-					/* Copy entry to destination */
+					/* This is a tracked process - keep the entry with modified PID */
+					/* Copy the entire entry to preserve all fields including d_type */
 					memcpy(dst, src, entry->d_reclen);
 					struct linux_dirent64 *new_entry = (struct linux_dirent64 *)dst;
 					
-					/* Replace PID with fake PID (max PID is 7 digits) */
-					snprintf(new_entry->d_name, 32, "%d", fake_pid);
+					/* Replace PID with fake PID - max 10 chars for 32-bit PID */
+					snprintf(new_entry->d_name, 256, "%d", fake_pid);
 					
 					dst += entry->d_reclen;
 					bytes_kept += entry->d_reclen;
@@ -452,14 +452,13 @@ static int handle_getdents_exit(Tracee *tracee)
 				pid_t fake_pid = real_to_fake_pid(tracee, real_pid);
 				
 				if (fake_pid > 0) {
-					/* This is a tracked process - modify the entry */
-					
-					/* Copy entry to destination */
+					/* This is a tracked process - keep the entry with modified PID */
+					/* Copy the entire entry to preserve all fields */
 					memcpy(dst, src, entry->d_reclen);
 					struct linux_dirent *new_entry = (struct linux_dirent *)dst;
 					
-					/* Replace PID with fake PID (max PID is 7 digits) */
-					snprintf(new_entry->d_name, 32, "%d", fake_pid);
+					/* Replace PID with fake PID - max 10 chars for 32-bit PID */
+					snprintf(new_entry->d_name, 256, "%d", fake_pid);
 					
 					dst += entry->d_reclen;
 					bytes_kept += entry->d_reclen;
