@@ -603,6 +603,9 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 			config->fake_pid = tracee->pid;
 		}
 
+		/* CRITICAL: Set filtered_sysnums so syscalls are intercepted for child processes */
+		extension->filtered_sysnums = filtered_sysnums;
+
 		return 0;
 	}
 
