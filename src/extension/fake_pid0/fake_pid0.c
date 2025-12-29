@@ -36,9 +36,12 @@
 #include "syscall/syscall.h"
 #include "syscall/sysnum.h"
 #include "syscall/seccomp.h"
+#include "syscall/chain.h"
 #include "tracee/tracee.h"
 #include "tracee/reg.h"
+#include "tracee/mem.h"
 #include "path/temp.h"   /* create_temp_file, */
+#include "path/path.h"
 #include "attribute.h"   /* UNUSED, */
 
 typedef struct {
@@ -47,6 +50,22 @@ typedef struct {
 	pid_t fake_pid;      /* Fake PID assigned to this tracee */
 	pid_t next_fake_pid; /* Next fake PID to assign (only used by root) */
 } Config;
+
+/* Structures for getdents */
+struct linux_dirent {
+	unsigned long d_ino;
+	unsigned long d_off;
+	unsigned short d_reclen;
+	char d_name[];
+};
+
+struct linux_dirent64 {
+	unsigned long long d_ino;
+	long long d_off;
+	unsigned short d_reclen;
+	unsigned char d_type;
+	char d_name[];
+};
 
 /* List of syscalls handled by this extension.  */
 static FilteredSysnum filtered_sysnums[] = {
@@ -58,6 +77,8 @@ static FilteredSysnum filtered_sysnums[] = {
 	{ PR_tgkill,	0 },
 	{ PR_wait4,	0 },
 	{ PR_waitpid,	0 },
+	{ PR_getdents,    FILTER_SYSEXIT },
+	{ PR_getdents64,  FILTER_SYSEXIT },
 	FILTERED_SYSNUM_END,
 };
 
@@ -299,6 +320,181 @@ static pid_t get_fake_ppid(Tracee *tracee, Config *config)
 }
 
 /**
+ * Handle getdents/getdents64 to filter /proc directory listings
+ * Shows only fake PIDs for traced processes
+ */
+static int handle_getdents_exit(Tracee *tracee)
+{
+	word_t sysnum = get_sysnum(tracee, ORIGINAL);
+	
+	if (sysnum != PR_getdents && sysnum != PR_getdents64)
+		return 0;
+	
+	/* Get the result of the syscall */
+	word_t result = peek_reg(tracee, CURRENT, SYSARG_RESULT);
+	if ((int)result <= 0)
+		return 0;
+	
+	/* Get the file descriptor to check if it's /proc */
+	int fd = peek_reg(tracee, ORIGINAL, SYSARG_1);
+	char path[PATH_MAX];
+	int status = readlink_proc_pid_fd(tracee->pid, fd, path);
+	if (status < 0)
+		return 0;
+	
+	/* Only filter /proc directory */
+	if (strcmp(path, "/proc") != 0)
+		return 0;
+	
+	/* Get proot's own PID to filter it out */
+	pid_t proot_pid = getpid();
+	
+	/* Get syscall arguments */
+	word_t buf_addr = peek_reg(tracee, CURRENT, SYSARG_2);
+	word_t buf_size = peek_reg(tracee, CURRENT, SYSARG_3);
+	
+	/* Allocate buffer to read directory entries */
+	char *buf = talloc_size(tracee->ctx, buf_size);
+	if (buf == NULL)
+		return 0;
+	
+	/* Read the directory entries from tracee memory */
+	status = read_data(tracee, buf, buf_addr, result);
+	if (status < 0) {
+		talloc_free(buf);
+		return 0;
+	}
+	
+	/* Allocate buffer for filtered entries */
+	char *filtered_buf = talloc_size(tracee->ctx, buf_size);
+	if (filtered_buf == NULL) {
+		talloc_free(buf);
+		return 0;
+	}
+	
+	char *src = buf;
+	char *dst = filtered_buf;
+	word_t bytes_kept = 0;
+	
+	/* Process directory entries */
+	if (sysnum == PR_getdents64) {
+		while (src < buf + result) {
+			struct linux_dirent64 *entry = (struct linux_dirent64 *)src;
+			
+			/* Check if entry name is a PID (all digits) */
+			bool is_pid = true;
+			for (char *p = entry->d_name; *p; p++) {
+				if (!isdigit(*p)) {
+					is_pid = false;
+					break;
+				}
+			}
+			
+			if (is_pid) {
+				/* Convert to PID and check if it's a tracked process */
+				pid_t real_pid = atoi(entry->d_name);
+				
+				/* Skip proot's own PID - it's not part of the virtualized namespace */
+				if (real_pid == proot_pid) {
+					src += entry->d_reclen;
+					continue;
+				}
+				
+				pid_t fake_pid = real_to_fake_pid(tracee, real_pid);
+				
+				if (fake_pid > 0) {
+					/* This is a tracked process - modify the entry */
+					
+					/* Copy entry to destination */
+					memcpy(dst, src, entry->d_reclen);
+					struct linux_dirent64 *new_entry = (struct linux_dirent64 *)dst;
+					
+					/* Replace PID with fake PID (max PID is 7 digits) */
+					snprintf(new_entry->d_name, 32, "%d", fake_pid);
+					
+					dst += entry->d_reclen;
+					bytes_kept += entry->d_reclen;
+				}
+			} else {
+				/* Not a PID entry - keep it as is (self, uptime, etc.) */
+				memcpy(dst, src, entry->d_reclen);
+				dst += entry->d_reclen;
+				bytes_kept += entry->d_reclen;
+			}
+			
+			src += entry->d_reclen;
+		}
+	} else {
+		/* PR_getdents (32-bit) */
+		while (src < buf + result) {
+			struct linux_dirent *entry = (struct linux_dirent *)src;
+			
+			/* Check if entry name is a PID (all digits) */
+			bool is_pid = true;
+			for (char *p = entry->d_name; *p; p++) {
+				if (!isdigit(*p)) {
+					is_pid = false;
+					break;
+				}
+			}
+			
+			if (is_pid) {
+				/* Convert to PID and check if it's a tracked process */
+				pid_t real_pid = atoi(entry->d_name);
+				
+				/* Skip proot's own PID - it's not part of the virtualized namespace */
+				if (real_pid == proot_pid) {
+					src += entry->d_reclen;
+					continue;
+				}
+				
+				pid_t fake_pid = real_to_fake_pid(tracee, real_pid);
+				
+				if (fake_pid > 0) {
+					/* This is a tracked process - modify the entry */
+					
+					/* Copy entry to destination */
+					memcpy(dst, src, entry->d_reclen);
+					struct linux_dirent *new_entry = (struct linux_dirent *)dst;
+					
+					/* Replace PID with fake PID (max PID is 7 digits) */
+					snprintf(new_entry->d_name, 32, "%d", fake_pid);
+					
+					dst += entry->d_reclen;
+					bytes_kept += entry->d_reclen;
+				}
+			} else {
+				/* Not a PID entry - keep it as is */
+				memcpy(dst, src, entry->d_reclen);
+				dst += entry->d_reclen;
+				bytes_kept += entry->d_reclen;
+			}
+			
+			src += entry->d_reclen;
+		}
+	}
+	
+	/* Write filtered entries back to tracee memory */
+	if (bytes_kept > 0) {
+		status = write_data(tracee, buf_addr, filtered_buf, bytes_kept);
+		if (status < 0) {
+			talloc_free(buf);
+			talloc_free(filtered_buf);
+			return 0;
+		}
+		/* Update return value to reflect filtered size */
+		poke_reg(tracee, SYSARG_RESULT, bytes_kept);
+	} else {
+		/* No entries left - return 0 */
+		poke_reg(tracee, SYSARG_RESULT, 0);
+	}
+	
+	talloc_free(buf);
+	talloc_free(filtered_buf);
+	return 0;
+}
+
+/**
  * Handler for this @extension.  It is triggered each time an @event
  * occurred.  See ExtensionEvent for the meaning of @data1 and @data2.
  */
@@ -393,9 +589,18 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 					was_proc_1 = true;
 				}
 				
-				/* Replace "/proc/1" with "/proc/{root_pid}" */
+				/* Find the tracee with fake PID 1 and use its real PID */
+				Tracee *pid1_tracee = find_tracee_by_fake_pid(tracee, 1);
+				pid_t real_pid_1 = pid1_tracee ? pid1_tracee->pid : 0;
+				
+				if (real_pid_1 == 0) {
+					/* Fake PID 1 doesn't exist */
+					return -ENOENT;
+				}
+				
+				/* Replace "/proc/1" with "/proc/{real_pid_1}" */
 				status = snprintf(new_path, PATH_MAX, "/proc/%d%s", 
-						  config->root_pid, translated_path + 7);
+						  real_pid_1, translated_path + 7);
 				if (status < 0 || status >= PATH_MAX)
 					return -ENAMETOOLONG;
 
@@ -408,10 +613,9 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 					char *last_slash = strrchr(translated_path, '/');
 					if (last_slash != NULL) {
 						const char *new_suffix = last_slash + 1;
-						/* Get fake PIDs for the root process */
-						Config *root_config = get_root_config(tracee);
-						pid_t fake_pid = root_config ? root_config->fake_pid : 1;
-						pid_t fake_ppid = 0; /* Root has no parent */
+						/* Fake PID 1 has PPID 0 */
+						pid_t fake_pid = 1;
+						pid_t fake_ppid = 0;
 						
 						if (strcmp(new_suffix, "stat") == 0) {
 							/* Use translated_path for both input and output - the function
@@ -569,6 +773,11 @@ int fake_pid0_callback(Extension *extension, ExtensionEvent event, intptr_t data
 
 		config = talloc_get_type_abort(extension->config, Config);
 		sysnum = get_sysnum(tracee, ORIGINAL);
+
+		/* Handle getdents/getdents64 for /proc filtering */
+		if (sysnum == PR_getdents || sysnum == PR_getdents64) {
+			return handle_getdents_exit(tracee);
+		}
 
 		/* Handle getpid and gettid - return fake PID for this tracee */
 		if (sysnum == PR_getpid || sysnum == PR_gettid) {
