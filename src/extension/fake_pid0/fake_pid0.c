@@ -237,6 +237,7 @@ static Tracee *find_tracee_by_real_pid(Tracee *current_tracee, pid_t real_pid)
 /**
  * Get fake PID for a given real PID
  * Returns 0 if the PID is not in our namespace
+ * Returns -1 if the PID is in namespace but doesn't have a fake PID assigned yet
  */
 static pid_t real_to_fake_pid(Tracee *tracee, pid_t real_pid)
 {
@@ -253,8 +254,33 @@ static pid_t real_to_fake_pid(Tracee *tracee, pid_t real_pid)
 	
 	/* Get the fake PID from the target's config */
 	Extension *target_ext = get_extension(target, fake_pid0_callback);
-	if (target_ext == NULL || target_ext->config == NULL)
-		return 0;
+	if (target_ext == NULL || target_ext->config == NULL) {
+		/* Process is tracked but extension not initialized yet - assign fake PID now */
+		/* This can happen during process startup before INHERIT_CHILD event */
+		Config *root_config = get_root_config(tracee);
+		if (root_config != NULL) {
+			/* Initialize extension for this tracee */
+			target_ext = get_extension(target, fake_pid0_callback);
+			if (target_ext == NULL) {
+				/* Extension doesn't exist, create it */
+				target_ext = talloc_zero(target, Extension);
+				if (target_ext != NULL) {
+					target_ext->callback = fake_pid0_callback;
+					target_ext->config = talloc_zero(target_ext, Config);
+					if (target_ext->config != NULL) {
+						Config *config = talloc_get_type_abort(target_ext->config, Config);
+						config->is_root_tracee = false;
+						config->root_pid = root_config->root_pid;
+						config->fake_pid = root_config->next_fake_pid;
+						root_config->next_fake_pid++;
+						return config->fake_pid;
+					}
+				}
+			}
+		}
+		/* If we can't assign a fake PID, return -1 to indicate tracked but unassigned */
+		return -1;
+	}
 	
 	Config *target_config = talloc_get_type_abort(target_ext->config, Config);
 	return target_config->fake_pid;
@@ -406,14 +432,22 @@ static int handle_getdents_exit(Tracee *tracee)
 				
 				pid_t fake_pid = real_to_fake_pid(tracee, real_pid);
 				
-				if (fake_pid > 0) {
+				/* Show this process if:
+				 * - fake_pid > 0: tracked with assigned fake PID
+				 * - fake_pid == -1: tracked but not yet assigned (race condition)
+				 * Don't show if fake_pid == 0: not tracked (not in namespace)
+				 */
+				if (fake_pid != 0) {
 					/* This is a tracked process - keep the entry with modified PID */
 					/* Copy the entire entry to preserve all fields including d_type */
 					memcpy(dst, src, entry->d_reclen);
 					struct linux_dirent64 *new_entry = (struct linux_dirent64 *)dst;
 					
-					/* Replace PID with fake PID - max 10 chars for 32-bit PID */
-					snprintf(new_entry->d_name, 256, "%d", fake_pid);
+					/* Replace PID with fake PID (or real PID if not assigned yet) */
+					if (fake_pid > 0) {
+						snprintf(new_entry->d_name, 256, "%d", fake_pid);
+					}
+					/* else keep original real PID as temporary until fake PID assigned */
 					
 					dst += entry->d_reclen;
 					bytes_kept += entry->d_reclen;
@@ -453,14 +487,22 @@ static int handle_getdents_exit(Tracee *tracee)
 				
 				pid_t fake_pid = real_to_fake_pid(tracee, real_pid);
 				
-				if (fake_pid > 0) {
+				/* Show this process if:
+				 * - fake_pid > 0: tracked with assigned fake PID
+				 * - fake_pid == -1: tracked but not yet assigned (race condition)
+				 * Don't show if fake_pid == 0: not tracked (not in namespace)
+				 */
+				if (fake_pid != 0) {
 					/* This is a tracked process - keep the entry with modified PID */
 					/* Copy the entire entry to preserve all fields */
 					memcpy(dst, src, entry->d_reclen);
 					struct linux_dirent *new_entry = (struct linux_dirent *)dst;
 					
-					/* Replace PID with fake PID - max 10 chars for 32-bit PID */
-					snprintf(new_entry->d_name, 256, "%d", fake_pid);
+					/* Replace PID with fake PID (or real PID if not assigned yet) */
+					if (fake_pid > 0) {
+						snprintf(new_entry->d_name, 256, "%d", fake_pid);
+					}
+					/* else keep original real PID as temporary until fake PID assigned */
 					
 					dst += entry->d_reclen;
 					bytes_kept += entry->d_reclen;
