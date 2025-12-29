@@ -10,6 +10,8 @@ on:
 jobs:
   build-arm64:
     runs-on: ubuntu-latest-arm64
+    permissions:
+      contents: read
     container:
       image: docker.io/termux/termux-root:aarch64
 
